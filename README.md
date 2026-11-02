@@ -12,7 +12,7 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 
 | Path | What it is |
 |---|---|
-| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`. Each has functions a UI can call and a `main()` for the command line. |
+| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, and `store` (the SQLite hash cache and saved scans). Each has functions a UI can call and a `main()` for the command line. |
 | `tests/` | Automated tests, including the edge cases found on real drives. They run on Windows and Linux for every pull request. |
 | `engine/find_dupes.py` | Read-only scan of one or more folders or drives: size, then first 64 KB, then full BLAKE2b hash. Writes a CSV report. |
 | `engine/quarantine_dupes.py` | Moves extra copies to a quarantine folder on the same drive. Dry run by default; `--go` to move, `--verify` to re-hash first, `--undo LOG` to restore. Keeper rules: `--only-under`, `--prefer`, `--skip-name`. |
@@ -36,6 +36,8 @@ py engine\quarantine_dupes.py C:\dupefinder\test.csv --go --verify
 py engine\verify_quarantine.py <moves log printed above>
 ```
 
+Add `--db C:\dupefinder\dupefinder.db` to `find_dupes.py` to remember hashes in a small database outside the scanned drive. A rescan then only reads files that are new or changed, and if a scan is interrupted, running the same command again carries on where it stopped. Each scan's results are saved in the database too.
+
 Never run the tools inside live backup folders (Seagate Toolkit, Samsung Smart Switch, File History, Windows Backup).
 
 ## Running the tests
@@ -47,5 +49,4 @@ py -m pytest
 
 ## Next steps
 
-1. Store scan results in SQLite (hash cache, resumable scans).
-2. Build the desktop UI (planned: PySide6, Windows first).
+1. Build the desktop UI (planned: PySide6, Windows first), starting with the Scan, Review and Dry run screens.
