@@ -451,3 +451,16 @@ def test_wait_and_delete(qapp, data, tmp_path):
     w.go(5)                                           # it can no longer be put back
     assert not w.quarantine.undo_button.isEnabled()
     assert "deleted them for good" in w.quarantine.result_title.text()
+
+
+def test_smoke_test_of_a_built_app(qapp):
+    from dupefinder.app import smoke
+    assert smoke.run() == 0
+
+
+def test_version_matches_pyproject():
+    import re
+    from dupefinder import __version__
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    text = open(os.path.join(root, "pyproject.toml"), encoding="utf-8").read()
+    assert re.search(r'^version = "([^"]+)"', text, re.M).group(1) == __version__

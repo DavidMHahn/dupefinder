@@ -43,6 +43,16 @@ Never run the tools inside live backup folders (Seagate Toolkit, Samsung Smart S
 
 ## The desktop app
 
+### Install it (Windows, no Python needed)
+
+1. Open the repository's **Actions** tab, then **windows installer**, then the newest green run, and download **dupefinder-setup-<version>** under *Artifacts* (a ZIP holding the installer). Once a version is tagged (for example `v0.2.0`), it is also on the **Releases** page.
+2. Run `dupefinder-setup-<version>.exe`. It installs for your Windows account only, so it does not ask for an administrator password, and adds dupefinder to the Start menu.
+3. The installer is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+
+Uninstall it from Settings, Apps. Uninstalling removes the program only: your scans and moves logs in `%LOCALAPPDATA%\dupefinder` and any `_dupes_quarantine` folders stay, so nothing in quarantine is lost.
+
+### Run it from the source code
+
 Needs Python 3.10 or newer.
 
 ```powershell
@@ -73,7 +83,11 @@ py -m pip install pytest
 py -m pytest
 ```
 
+## Building the installer
+
+`.github/workflows/installer.yml` builds it on GitHub's Windows machines for every change: PyInstaller makes the program folder, `packaging/dupefinder.iss` (Inno Setup) wraps it into one setup file, and the workflow checks that both the built and the installed program pass `dupefinder.exe --smoke-test`, and that uninstalling works. To publish a release, tag a commit `v<version>` (matching `__version__` in `dupefinder/__init__.py` and `pyproject.toml`) and push the tag.
+
 ## Next steps
 
-1. A Windows installer, so people don't need Python.
-2. Try the whole app on a real drive, with a backup first.
+1. Try the whole app on a real drive, with a backup first.
+2. Code-sign the installer, so SmartScreen stops warning.
