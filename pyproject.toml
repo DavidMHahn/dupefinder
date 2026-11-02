@@ -1,0 +1,8 @@
+[project]
+name = "dupefinder"
+version = "0.1.0"
+description = "Find duplicate files and remove them safely: dry run, quarantine, verify, undo."
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
