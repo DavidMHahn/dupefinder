@@ -99,7 +99,6 @@ class QuarantineScreen(QWidget):
         self.next_button = QPushButton("Verify the quarantine  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Verify screen comes next.")
         buttons.addWidget(self.next_button)
         layout.addLayout(buttons)
 
@@ -185,7 +184,7 @@ class QuarantineScreen(QWidget):
                                      "until you are sure nothing is missing; the next step checks it.")
             self.undo_button.setEnabled(self.thread is None and bool(run["moved"]))
         self.log_label.setText(f"Moves log: {run['log_path']}")
-        self.next_button.setEnabled(False)          # until the Verify screen exists
+        self.next_button.setEnabled(not run["undone"] and bool(run["moved"]))
 
     # ------------------------------------------------------------ moving
     def start(self):

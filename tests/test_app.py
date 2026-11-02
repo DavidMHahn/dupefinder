@@ -127,7 +127,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     w.scan.roots.add(str(data))
     w.scan.start_button.click()
     wait_for(qapp, lambda: w.scan.thread is None)
-    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine"]
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine", "6   Verify"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
     assert w.pages.currentWidget() is w.review
@@ -357,3 +357,45 @@ def test_quarantine_cancelled_confirmation_moves_nothing(qapp, data, tmp_path):
     q.confirm = lambda title, text: False
     q.start_button.click()
     assert q.thread is None and files(data) == before
+
+
+def verify_window(qapp, data, tmp_path):
+    w, q, db = quarantine_window(qapp, data, tmp_path)
+    q.start_button.click()
+    wait_for(qapp, lambda: q.thread is None)
+    assert q.next_button.isEnabled()
+    q.next_button.click()
+    assert w.pages.currentWidget() is w.verify
+    return w, w.verify, db
+
+
+def test_verify_safe_then_not_safe(qapp, data, tmp_path):
+    w, v, db = verify_window(qapp, data, tmp_path)
+    assert v.picker.count() == 1 and v.stage.text() == "Not checked yet."
+    v.check_button.click()
+    wait_for(qapp, lambda: v.thread is None)
+    assert v.verdict_label.text() == "SAFE" and v.verdict.total == 4
+    assert not v.problems.isVisible()
+
+    kept = w.quarantine.dry.moving[0].kept
+    with open(kept, "r+b") as f:                      # a kept copy changes after quarantine
+        f.write(b"\0changed")
+    v.check_button.click()
+    wait_for(qapp, lambda: v.thread is None)
+    assert v.verdict_label.text() == "NOT SAFE to delete"
+    assert "kept copy changed" in v.detail.text() and v.problems.count() >= 1
+
+    again = MainWindow(db_path=db)                    # the last result is remembered
+    again.go(6)
+    assert again.verify.verdict_label.text() == "NOT SAFE to delete"
+
+
+def test_verify_lists_nothing_after_undo(qapp, data, tmp_path):
+    w, v, db = verify_window(qapp, data, tmp_path)
+    q = w.quarantine
+    q.undo_button.click()
+    wait_for(qapp, lambda: q.thread is None)
+    w.go(5)
+    w.go(6)
+    assert v.picker.count() == 0 and not v.check_button.isEnabled()
+    assert "Nothing is in quarantine" in v.stage.text()

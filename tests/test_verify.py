@@ -60,3 +60,24 @@ def test_cli_exit_codes(moved, capsys):
         verify.main([log])
     assert e.value.code == 1
     assert "NOT SAFE" in capsys.readouterr().out
+
+
+def test_progress_and_unreadable_files(tmp_path, monkeypatch):
+    import csv as _csv
+    log = tmp_path / "moves.csv"
+    kept, quar = tmp_path / "k.bin", tmp_path / "q.bin"
+    kept.write_bytes(b"same")
+    quar.write_bytes(b"same")
+    with open(log, "w", newline="", encoding="utf-8-sig") as f:
+        w = _csv.writer(f)
+        w.writerow(quarantine.LOG_COLUMNS)
+        w.writerow([1, "moved", str(kept), str(tmp_path / "orig.bin"), str(quar), 4])
+    seen = []
+    assert verify.verify_log(str(log), lambda d, t: seen.append((d, t))).safe
+    assert seen == [(0, 1), (1, 1)]
+
+    def unreadable(path):
+        raise PermissionError(13, "Permission denied", path)
+    monkeypatch.setattr(verify, "blake2b", unreadable)
+    v = verify.verify_log(str(log))
+    assert not v.safe and v.problems[0].startswith("COULD NOT READ")

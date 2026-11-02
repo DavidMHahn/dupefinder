@@ -38,25 +38,36 @@ class Verdict:
         return kinds
 
 
-def verify_log(log_path):
-    """Check every 'moved' row of a moves log and return a Verdict."""
+def verify_log(log_path, progress=None):
+    """Check every 'moved' row of a moves log and return a Verdict.
+
+    progress(done, total), if given, is called before each file; it may raise
+    to stop (the caller then has no verdict, so nothing counts as checked)."""
     with open(log_path, newline="", encoding="utf-8-sig") as f:
         rows = [r for r in csv.DictReader(f) if r["status"] == "moved"]
 
     v = Verdict(total=len(rows))
-    for r in rows:
+    for i, r in enumerate(rows):
+        if progress:
+            progress(i, len(rows))
         kept, quar, orig = r["kept_path"], r["quarantine_path"], r["original_path"]
-        if not os.path.isfile(kept):
-            v.problems.append(f"KEPT COPY MISSING: {kept}  (do not delete {quar})")
-        elif not os.path.isfile(quar):
-            if os.path.isfile(orig):
-                v.problems.append(f"already restored to original place: {orig}")
+        try:
+            if not os.path.isfile(kept):
+                v.problems.append(f"KEPT COPY MISSING: {kept}  (do not delete {quar})")
+            elif not os.path.isfile(quar):
+                if os.path.isfile(orig):
+                    v.problems.append(f"already restored to original place: {orig}")
+                else:
+                    v.problems.append(f"quarantined copy missing: {quar}")
+            elif os.path.getsize(kept) != os.path.getsize(quar) or blake2b(kept) != blake2b(quar):
+                v.problems.append(f"KEPT COPY CHANGED, no longer identical: {kept}  (do not delete {quar})")
             else:
-                v.problems.append(f"quarantined copy missing: {quar}")
-        elif os.path.getsize(kept) != os.path.getsize(quar) or blake2b(kept) != blake2b(quar):
-            v.problems.append(f"KEPT COPY CHANGED, no longer identical: {kept}  (do not delete {quar})")
-        else:
-            v.ok += 1
+                v.ok += 1
+        except OSError as e:
+            v.problems.append(f"COULD NOT READ: {e.filename or kept} ({e.strerror or e})  "
+                              f"(do not delete {quar})")
+    if progress:
+        progress(len(rows), len(rows))
     return v
 
 

@@ -14,6 +14,7 @@ from .keepers_screen import KeepersScreen
 from .quarantine_screen import QuarantineScreen
 from .review_screen import ReviewScreen
 from .scan_screen import ScanScreen
+from .verify_screen import VerifyScreen
 from .worker import default_db_path
 
 STEPS = [
@@ -27,7 +28,7 @@ STEPS = [
     ("Delete", "Empty the quarantine for good."),
 ]
 
-BUILT_STEPS = 5          # steps that have a screen so far
+BUILT_STEPS = 6          # steps that have a screen so far
 
 STYLE = """
 QListWidget#steps { border: none; font-size: 14px; }
@@ -59,7 +60,8 @@ class MainWindow(QMainWindow):
         self.keepers = KeepersScreen(db_path)
         self.dryrun = DryRunScreen(db_path)
         self.quarantine = QuarantineScreen(db_path)
-        for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine):
+        self.verify = VerifyScreen(db_path)
+        for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine, self.verify):
             self.pages.addWidget(page)
         self.scan.next_button.clicked.connect(lambda: self.go(2))
         self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
@@ -67,6 +69,7 @@ class MainWindow(QMainWindow):
         self.review.next_requested.connect(lambda: self.go(3))
         self.keepers.next_requested.connect(lambda: self.go(4))
         self.dryrun.next_requested.connect(lambda: self.go(5))
+        self.quarantine.next_requested.connect(lambda: self.go(6))
         self.steps.currentRowChanged.connect(self._show_page)
 
         side = QVBoxLayout()
@@ -98,6 +101,8 @@ class MainWindow(QMainWindow):
             self.dryrun.load(self.review.scan_id)
         if row == 4:
             self.quarantine.load(self.review.scan_id)
+        if row == 5:
+            self.verify.load(self.review.scan_id)
         self.pages.setCurrentIndex(row)
 
     def _update_steps(self):
@@ -105,7 +110,7 @@ class MainWindow(QMainWindow):
         Quarantine once it found duplicates."""
         upto = 1
         if self.review.scans.count():
-            upto = 5 if self.review.sets else 2
+            upto = 6 if self.review.sets else 2
         self._set_enabled(upto)
 
     def _set_enabled(self, upto):

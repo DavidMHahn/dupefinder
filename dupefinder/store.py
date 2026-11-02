@@ -21,6 +21,7 @@ Five jobs:
 
 5. Quarantine runs. When a dry run was carried out and where its moves log
    is. The log itself (a CSV) stays the record of what moved, for undo and verify.
+   Each verification of a run is kept too (when, and what it found).
 
 The database lives OUTSIDE the scanned folders (the finder refuses otherwise),
 and it never stores file contents, only paths, sizes, dates and hashes.
@@ -106,9 +107,18 @@ CREATE TABLE IF NOT EXISTS quarantine_runs (
     stopped     INTEGER,          -- 1 if the person stopped it part-way
     undone      TEXT              -- when everything was put back, or NULL
 );
+CREATE TABLE IF NOT EXISTS verifications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES quarantine_runs(id) ON DELETE CASCADE,
+    checked     TEXT NOT NULL,
+    ok          INTEGER NOT NULL,
+    total       INTEGER NOT NULL,
+    problems    TEXT NOT NULL     -- JSON list, at most MAX_PROBLEMS_SAVED
+);
 """
 
 COMMIT_SECONDS = 5.0
+MAX_PROBLEMS_SAVED = 5000
 KINDS = ("partial", "full")       # the only column names ever put into SQL text
 
 
@@ -300,3 +310,21 @@ class Store:
         rows = self.db.execute(f"SELECT {', '.join(cols)} FROM quarantine_runs WHERE scan_id = ? "
                                "ORDER BY id DESC", (scan_id,))
         return [dict(zip(cols, r)) for r in rows]
+
+    # ------------------------------------------------------------ verifications
+    def save_verification(self, run_id, verdict):
+        self.db.execute("INSERT INTO verifications (run_id, checked, ok, total, problems) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (run_id, _now(), verdict.ok, verdict.total,
+                         json.dumps(verdict.problems[:MAX_PROBLEMS_SAVED])))
+        self.commit()
+
+    def latest_verification(self, run_id):
+        """(checked time, verify.Verdict) of the newest check of a quarantine run, or None."""
+        from .verify import Verdict
+        row = self.db.execute("SELECT checked, ok, total, problems FROM verifications WHERE run_id = ? "
+                              "ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
+        if not row:
+            return None
+        checked, ok, total, problems = row
+        return checked, Verdict(ok, total, json.loads(problems))
