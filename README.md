@@ -12,6 +12,8 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 
 | Path | What it is |
 |---|---|
+| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`. Each has functions a UI can call and a `main()` for the command line. |
+| `tests/` | Automated tests, including the edge cases found on real drives. They run on Windows and Linux for every pull request. |
 | `engine/find_dupes.py` | Read-only scan of one or more folders or drives: size, then first 64 KB, then full BLAKE2b hash. Writes a CSV report. |
 | `engine/quarantine_dupes.py` | Moves extra copies to a quarantine folder on the same drive. Dry run by default; `--go` to move, `--verify` to re-hash first, `--undo LOG` to restore. Keeper rules: `--only-under`, `--prefer`, `--skip-name`. |
 | `engine/verify_quarantine.py` | Read-only check of a moves log: SAFE or NOT SAFE, with a problem summary. |
@@ -21,6 +23,8 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 | `docs/runbook.md` | Step-by-step runbook with every command, gotchas, and the scripts as they were used. |
 | `docs/walkthrough.md` | First-time walkthrough on test data. |
 | `docs/app-idea-notes.md` | Notes for the standalone app. The full product brief is a separate document. |
+
+The `engine/` scripts are now small wrappers around the package, with the same options as before. They need the `dupefinder/` folder next to `engine/`, so copy the whole repository rather than a single script.
 
 ## Quick start (Windows, Python 3.9+)
 
@@ -34,8 +38,14 @@ py engine\verify_quarantine.py <moves log printed above>
 
 Never run the tools inside live backup folders (Seagate Toolkit, Samsung Smart Switch, File History, Windows Backup).
 
+## Running the tests
+
+```powershell
+py -m pip install pytest
+py -m pytest
+```
+
 ## Next steps
 
-1. Turn the scripts into one Python package with automated tests built from the edge cases in the product brief.
-2. Store scan results in SQLite (hash cache, resumable scans).
-3. Build the desktop UI (planned: PySide6, Windows first).
+1. Store scan results in SQLite (hash cache, resumable scans).
+2. Build the desktop UI (planned: PySide6, Windows first).

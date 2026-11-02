@@ -3,3 +3,4 @@ __pycache__/
 *.csv
 moves_*.txt
 _dupes_quarantine/
+.pytest_cache/
