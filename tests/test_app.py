@@ -127,7 +127,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     w.scan.roots.add(str(data))
     w.scan.start_button.click()
     wait_for(qapp, lambda: w.scan.thread is None)
-    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers"]
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
     assert w.pages.currentWidget() is w.review
@@ -196,7 +196,7 @@ def test_keepers_default_rules(qapp, data, tmp_path):
     decisions = {video.child(i).text(0): video.child(i).text(1) for i in range(video.childCount())}
     assert decisions[str(data / "a" / "video_copy.bin")] == "Keep"
     assert decisions[str(data / "c" / "deep" / "video_copy.bin")] == "Move to quarantine"
-    assert not k.next_button.isEnabled()                # Dry run screen not built yet
+    assert k.next_button.isEnabled()
 
 
 def test_keepers_pick_by_hand_is_saved(qapp, data, tmp_path):
@@ -241,3 +241,59 @@ def test_keepers_filter(qapp, data, tmp_path):
     k = w.keepers
     k.filter.setText("photo")
     assert k.tree.topLevelItemCount() == 1 and k.shown_note.text() == "1 group matches"
+
+
+def dryrun_window(data, tmp_path):
+    w, db = keepers_window(data, tmp_path)
+    w.keepers.next_button.click()
+    assert w.pages.currentWidget() is w.dryrun
+    d = w.dryrun
+    vol = next(iter(d.quarantines))
+    assert d.set_quarantine(vol, str(tmp_path / "_q"))
+    return w, d, db
+
+
+def test_dry_run_screen(qapp, data, tmp_path):
+    w, d, db = dryrun_window(data, tmp_path)
+    assert d.qtable.rowCount() == 1 and d.qtable.item(0, 2).text() == "4"
+    assert d.summary.text() == ""
+    d.run_button.click()
+    wait_for(qapp, lambda: d.thread is None)
+    assert d.summary.text() == "4 copies would move to quarantine, freeing 10.21 MB."
+    assert d.proxy.rowCount() == 4
+    assert all(os.path.exists(p) for p in (data / "b" / "video_copy.bin", data / "c" / "deep" / "video_copy.bin"))
+    assert not (tmp_path / "_q").exists()                 # nothing moved
+    out = d.export_csv(str(tmp_path / "plan.csv"))
+    assert open(out, encoding="utf-8-sig").read().count("would move") == 4
+    assert not d.next_button.isEnabled()                  # Quarantine screen not built yet
+
+    # come back later: the saved dry run is shown, until a keeper choice changes
+    again = MainWindow(db_path=db)
+    again.go(4)
+    assert again.dryrun.summary.text().startswith("4 copies would move")
+    assert again.dryrun.quarantines[next(iter(again.dryrun.quarantines))] == str(tmp_path / "_q")
+    with Store(db) as st:
+        st.db.execute("UPDATE dry_runs SET created = '2000-01-01 00:00:00'")
+        st.save_choices(again.review.scan_id, {"keep": "alpha"}, {})
+    again.go(3)
+    again.go(4)
+    assert again.dryrun.summary.text() == "" and "run the dry run" in again.dryrun.stage.text()
+
+
+def test_dry_run_filter_and_skips(qapp, data, tmp_path):
+    w, d, _ = dryrun_window(data, tmp_path)
+    os.remove(data / "c" / "notes_backup.txt")
+    d.run_button.click()
+    wait_for(qapp, lambda: d.thread is None)
+    assert "3 copies would move" in d.summary.text() and "1 skipped" in d.summary.text()
+    assert "file no longer there" in d.reasons.text()
+    d.show_combo.setCurrentIndex(2)
+    assert d.proxy.rowCount() == 1
+    d.show_combo.setCurrentIndex(1)
+    d.filter.setText("photo")
+    assert d.proxy.rowCount() == 1
+
+
+def test_quarantine_must_be_on_the_same_drive(qapp, data, tmp_path):
+    w, d, _ = dryrun_window(data, tmp_path)
+    assert not d.set_quarantine("Z:" + os.sep, str(tmp_path / "_q2"))
