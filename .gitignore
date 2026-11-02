@@ -4,3 +4,7 @@ __pycache__/
 moves_*.txt
 _dupes_quarantine/
 .pytest_cache/
+build/
+dist/
+dist-installer/
+*.spec

@@ -1,8 +1,10 @@
 """The main window: the eight steps on the left, the current step on the right."""
 
+import os
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QStackedWidget, QVBoxLayout, QWidget,
@@ -144,9 +146,14 @@ class MainWindow(QMainWindow):
                 if self.steps.item(i).flags() & Qt.ItemIsEnabled]
 
 
+ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+
+
 def run(argv=None):
     app = QApplication.instance() or QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("dupefinder")
+    if os.path.exists(ICON):
+        app.setWindowIcon(QIcon(ICON))
     app.setStyleSheet(STYLE)
     window = MainWindow()
     window.show()

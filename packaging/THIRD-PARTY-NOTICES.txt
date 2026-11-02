@@ -1,0 +1,16 @@
+dupefinder includes third-party software:
+
+Python (the Python interpreter and standard library)
+  License: Python Software Foundation License Version 2
+  https://docs.python.org/3/license.html
+
+Qt for Python (PySide6, shiboken6) and the Qt libraries it uses
+  License: GNU Lesser General Public License version 3 (LGPLv3)
+  https://www.gnu.org/licenses/lgpl-3.0.html
+  Source code: https://code.qt.io/cgit/pyside/pyside-setup.git/ and https://code.qt.io/
+  These libraries are included as separate files (DLLs in the _internal folder)
+  and are not modified. You may replace them with other compatible versions.
+
+PyInstaller bootloader (used to start the program)
+  License: GPL 2.0 with a special exception that allows use in programs of any license
+  https://pyinstaller.org/en/stable/license.html
