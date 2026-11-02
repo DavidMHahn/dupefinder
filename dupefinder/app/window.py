@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from .dryrun_screen import DryRunScreen
+from .delete_screen import DeleteScreen
 from .keepers_screen import KeepersScreen
 from .quarantine_screen import QuarantineScreen
 from .review_screen import ReviewScreen
 from .scan_screen import ScanScreen
 from .verify_screen import VerifyScreen
+from .wait_screen import WaitScreen
 from .worker import default_db_path
 
 STEPS = [
@@ -28,7 +30,7 @@ STEPS = [
     ("Delete", "Empty the quarantine for good."),
 ]
 
-BUILT_STEPS = 6          # steps that have a screen so far
+BUILT_STEPS = 8          # steps that have a screen so far
 
 STYLE = """
 QListWidget#steps { border: none; font-size: 14px; }
@@ -61,7 +63,10 @@ class MainWindow(QMainWindow):
         self.dryrun = DryRunScreen(db_path)
         self.quarantine = QuarantineScreen(db_path)
         self.verify = VerifyScreen(db_path)
-        for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine, self.verify):
+        self.wait = WaitScreen(db_path)
+        self.delete = DeleteScreen(db_path)
+        for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine, self.verify,
+                     self.wait, self.delete):
             self.pages.addWidget(page)
         self.scan.next_button.clicked.connect(lambda: self.go(2))
         self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
@@ -70,6 +75,8 @@ class MainWindow(QMainWindow):
         self.keepers.next_requested.connect(lambda: self.go(4))
         self.dryrun.next_requested.connect(lambda: self.go(5))
         self.quarantine.next_requested.connect(lambda: self.go(6))
+        self.verify.next_requested.connect(lambda: self.go(7))
+        self.wait.next_requested.connect(lambda: self.go(8))
         self.steps.currentRowChanged.connect(self._show_page)
 
         side = QVBoxLayout()
@@ -103,14 +110,18 @@ class MainWindow(QMainWindow):
             self.quarantine.load(self.review.scan_id)
         if row == 5:
             self.verify.load(self.review.scan_id)
+        if row == 6:
+            self.wait.load(self.review.scan_id)
+        if row == 7:
+            self.delete.load(self.review.scan_id)
         self.pages.setCurrentIndex(row)
 
     def _update_steps(self):
-        """Scan is always open; Review once a scan is saved; the steps up to
-        Quarantine once it found duplicates."""
+        """Scan is always open; Review once a scan is saved; the rest once it
+        found duplicates (each screen says what it is waiting for)."""
         upto = 1
         if self.review.scans.count():
-            upto = 6 if self.review.sets else 2
+            upto = 8 if self.review.sets else 2
         self._set_enabled(upto)
 
     def _set_enabled(self, upto):

@@ -214,3 +214,45 @@ class VerifyWorker(QObject):
             self.failed.emit(f"{type(e).__name__}: {e}")
             return
         self.finished.emit(verdict)
+
+
+class DeleteWorker(QObject):
+    """Permanently deletes a quarantine run's copies in a QThread (see deleter.py).
+    Emits progress(done, total), then finished(result) or failed(message)."""
+
+    progress = Signal(int, int)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, run, qroots, db_path=None):
+        super().__init__()
+        self.run_info, self.qroots = run, qroots
+        self.db_path = os.path.abspath(db_path or default_db_path())
+        self._last = 0.0
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def _progress(self, done, total):
+        from ..deleter import Stopped
+        if self._stop:
+            raise Stopped()
+        now = time.monotonic()
+        if done == total or now - self._last >= 0.1:
+            self._last = now
+            self.progress.emit(done, total)
+
+    def run(self):
+        from .. import deleter
+        try:
+            out_log = deleter.log_name(os.path.join(os.path.dirname(self.db_path), "logs"))
+            with Store(self.db_path) as store:
+                did = store.start_deletion(self.run_info["id"], out_log)
+            res = deleter.run(self.run_info["log_path"], self.qroots, out_log, self._progress)
+            with Store(self.db_path) as store:
+                store.finish_deletion(did, res)
+        except Exception as e:
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        self.finished.emit(res)
