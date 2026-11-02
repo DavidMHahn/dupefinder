@@ -1,6 +1,6 @@
 """A small SQLite database for scan data.
 
-Two jobs:
+Three jobs:
 
 1. Hash cache. Every hash the finder computes is saved with the file's path,
    size and modified time. A later scan reuses it when the size and modified
@@ -12,6 +12,9 @@ Two jobs:
 2. Saved scans. Each finished scan is stored with its date, folders, options,
    the dupefinder version that made it, and its duplicate groups, so a review
    screen can list and reload past scans without re-reading a CSV.
+
+3. Keeper choices. The rules and hand-picked keepers chosen for a scan, so
+   the person can leave and come back, and the Dry run step can use them.
 
 The database lives OUTSIDE the scanned folders (the finder refuses otherwise),
 and it never stores file contents, only paths, sizes, dates and hashes.
@@ -55,6 +58,17 @@ CREATE TABLE IF NOT EXISTS scan_files (
     path      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS scan_files_scan ON scan_files(scan_id, grp);
+CREATE TABLE IF NOT EXISTS keeper_rules (
+    scan_id   INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+    rules     TEXT NOT NULL,      -- JSON: keepers.Rules
+    updated   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS keeper_picks (
+    scan_id   INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    grp       INTEGER NOT NULL,
+    path      TEXT NOT NULL,      -- the copy the person chose to keep by hand
+    PRIMARY KEY (scan_id, grp)
+);
 """
 
 COMMIT_SECONDS = 5.0
@@ -170,3 +184,19 @@ class Store:
                 "ORDER BY grp, path", (scan_id,)):
             groups.setdefault(grp, Group(size, [], digest)).paths.append(path)
         return [groups[k] for k in sorted(groups)]
+
+    # ------------------------------------------------------------ keeper choices
+    def save_choices(self, scan_id, rules, picks):
+        """Save a scan's keeper rules (a dict) and hand picks ({group number: path})."""
+        self.db.execute("INSERT OR REPLACE INTO keeper_rules (scan_id, rules, updated) VALUES (?, ?, ?)",
+                        (scan_id, json.dumps(rules), _now()))
+        self.db.execute("DELETE FROM keeper_picks WHERE scan_id = ?", (scan_id,))
+        self.db.executemany("INSERT INTO keeper_picks (scan_id, grp, path) VALUES (?, ?, ?)",
+                            ((scan_id, g, p) for g, p in sorted(picks.items())))
+        self.commit()
+
+    def load_choices(self, scan_id):
+        """Return (rules dict or None, {group number: path}) for a scan."""
+        row = self.db.execute("SELECT rules FROM keeper_rules WHERE scan_id = ?", (scan_id,)).fetchone()
+        picks = dict(self.db.execute("SELECT grp, path FROM keeper_picks WHERE scan_id = ?", (scan_id,)))
+        return (json.loads(row[0]) if row else None), picks
