@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from .dryrun_screen import DryRunScreen
 from .keepers_screen import KeepersScreen
+from .quarantine_screen import QuarantineScreen
 from .review_screen import ReviewScreen
 from .scan_screen import ScanScreen
 from .worker import default_db_path
@@ -26,7 +27,7 @@ STEPS = [
     ("Delete", "Empty the quarantine for good."),
 ]
 
-BUILT_STEPS = 4          # steps that have a screen so far
+BUILT_STEPS = 5          # steps that have a screen so far
 
 STYLE = """
 QListWidget#steps { border: none; font-size: 14px; }
@@ -57,13 +58,15 @@ class MainWindow(QMainWindow):
         self.review = ReviewScreen(db_path)
         self.keepers = KeepersScreen(db_path)
         self.dryrun = DryRunScreen(db_path)
-        for page in (self.scan, self.review, self.keepers, self.dryrun):
+        self.quarantine = QuarantineScreen(db_path)
+        for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine):
             self.pages.addWidget(page)
         self.scan.next_button.clicked.connect(lambda: self.go(2))
         self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
         self.review.loaded.connect(lambda has_groups: self._update_steps())
         self.review.next_requested.connect(lambda: self.go(3))
         self.keepers.next_requested.connect(lambda: self.go(4))
+        self.dryrun.next_requested.connect(lambda: self.go(5))
         self.steps.currentRowChanged.connect(self._show_page)
 
         side = QVBoxLayout()
@@ -93,14 +96,16 @@ class MainWindow(QMainWindow):
             self.keepers.load(self.review.scan_id)
         if row == 3:                    # the dry run always uses the latest keeper choices
             self.dryrun.load(self.review.scan_id)
+        if row == 4:
+            self.quarantine.load(self.review.scan_id)
         self.pages.setCurrentIndex(row)
 
     def _update_steps(self):
-        """Scan is always open; Review once a scan is saved; Choose keepers and Dry run once it
-        found duplicates."""
+        """Scan is always open; Review once a scan is saved; the steps up to
+        Quarantine once it found duplicates."""
         upto = 1
         if self.review.scans.count():
-            upto = 4 if self.review.sets else 2
+            upto = 5 if self.review.sets else 2
         self._set_enabled(upto)
 
     def _set_enabled(self, upto):
