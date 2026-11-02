@@ -15,6 +15,7 @@ Usage (Windows):
   py find_dupes.py "E:\\Photos" --out photos_dupes.csv --min-size 1024
   py find_dupes.py K:\\ L:\\ --out two_drives.csv     (compare two drives)
   py find_dupes.py J:\\From_K --exclude J:\\From_K\\Old --out a.csv   (skip one folder by full path)
+  py find_dupes.py J:\\ --out j.csv --db C:\\dupefinder\\dupefinder.db  (reuse hashes; resumable)
 """
 
 import argparse
@@ -26,6 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .common import PARTIAL_BYTES, SKIP_DIRS, fmt, hash_file, walk
+from .store import Store
 
 REPORT_COLUMNS = ["group", "copies", "size_bytes", "size_MB", "wasted_MB", "blake2b", "path"]
 
@@ -48,7 +50,8 @@ class ScanResult:
     n_bytes: int = 0
     candidate_files: int = 0                     # files sharing a size with another (stage 2)
     candidate_bytes: int = 0
-    full_hash_bytes: int = 0                     # data read in full in stage 4
+    full_hash_bytes: int = 0                     # data hashed in full in stage 4
+    cache_hits: int = 0                          # hashes reused from the database
     scan_only: bool = False
 
     @property
@@ -72,10 +75,16 @@ def split_excludes(excludes):
 
 def scan(root, min_size, skip=SKIP_DIRS, skip_paths=()):
     """Yield (path, size) for every regular file under root of at least min_size bytes."""
+    for path, size, _ in scan_entries(root, min_size, skip, skip_paths):
+        yield path, size
+
+
+def scan_entries(root, min_size, skip=SKIP_DIRS, skip_paths=()):
+    """Like scan, but yields (path, size, modified time in ns) for the hash cache."""
     for entry in walk(root, skip, skip_paths):
-        size = entry.stat().st_size
-        if size >= min_size:
-            yield entry.path, size
+        st = entry.stat()
+        if st.st_size >= min_size:
+            yield entry.path, st.st_size, st.st_mtime_ns
 
 
 def regroup(groups, key_func, label, log=print):
@@ -103,10 +112,12 @@ def regroup(groups, key_func, label, log=print):
     return result
 
 
-def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print):
+def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, store=None):
     """Run stages 1 to 4 over one or more folders and return a ScanResult.
 
-    `log` receives progress lines; pass None for silence."""
+    `log` receives progress lines; pass None for silence. With `store`
+    (a dupefinder.store.Store), hashes of files whose size and modified time
+    are unchanged are reused, and new hashes are saved as they are computed."""
     say = log or (lambda *a, **k: None)
     res = ScanResult(scan_only=scan_only)
     t0 = time.perf_counter()
@@ -114,10 +125,12 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print):
     # Stage 1: scan
     say(f"Stage 1: scanning {', '.join(roots)}")
     by_size = defaultdict(list)
+    mtimes = {}
     names, paths_ex = split_excludes(exclude)
     skip = SKIP_DIRS | names
-    for path, size in (f for root in roots for f in scan(root, min_size, skip, paths_ex)):
+    for path, size, mtime in (f for root in roots for f in scan_entries(root, min_size, skip, paths_ex)):
         by_size[size].append(path)
+        mtimes[path] = mtime
         res.n_files += 1
         res.n_bytes += size
         if log and res.n_files % 5000 == 0:
@@ -133,9 +146,23 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print):
     if scan_only:
         return res
 
+    if store is None:
+        def partial(p, s):
+            return hash_file(p, PARTIAL_BYTES)
+
+        def full(p, s):
+            return hash_file(p)
+    else:
+        def partial(p, s):
+            return store.hash_with_cache(hash_file, p, s, mtimes[p], "partial", PARTIAL_BYTES)
+
+        def full(p, s):
+            return store.hash_with_cache(hash_file, p, s, mtimes[p], "full")
+        hits_before = store.hits
+
     # Stage 3: hash the first 64 KB
     say(f"Stage 3: comparing the first {PARTIAL_BYTES // 1024} KB of each candidate")
-    groups = regroup(groups, lambda p, s: hash_file(p, PARTIAL_BYTES), "partial hash", log)
+    groups = regroup(groups, partial, "partial hash", log)
 
     # Stage 4: full hash. Files no bigger than 64 KB were already read in
     # full by stage 3, so their partial hash is their full hash.
@@ -145,9 +172,13 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print):
     say(f"Stage 4: full hash of {sum(len(p) for _, p in big):,} files "
         f"({fmt(res.full_hash_bytes)})")
     t4 = time.perf_counter()
-    final = regroup(big, lambda p, s: hash_file(p), "full hash", log)
+    final = regroup(big, full, "full hash", log)
     secs = time.perf_counter() - t4
-    if res.full_hash_bytes and secs > 0:
+    if store is not None:
+        store.commit()
+        res.cache_hits = store.hits - hits_before
+        say(f"  {res.cache_hits:,} hashes reused from the database")
+    elif res.full_hash_bytes and secs > 0:
         say(f"  read speed: {res.full_hash_bytes / 1e6 / secs:,.0f} MB/s")
     final += small
 
@@ -179,24 +210,47 @@ def main(argv=None):
                          "a full path such as J:\\From_K\\Old skips only that one folder")
     ap.add_argument("--scan-only", action="store_true",
                     help="stop after stage 2 and report how much data stage 4 might read")
+    ap.add_argument("--db", metavar="FILE",
+                    help="database (e.g. C:\\dupefinder\\dupefinder.db) that remembers hashes, so a "
+                         "rescan of unchanged files or a rerun after an interruption is much faster, "
+                         "and saves this scan's results")
     args = ap.parse_args(argv)
 
     roots = [os.path.abspath(r) for r in args.roots]
     out = os.path.abspath(args.out)
+    db = os.path.abspath(args.db) if args.db else None
     for root in roots:
-        if out.lower().startswith(root.lower().rstrip("\\/") + os.sep):
+        inside = root.lower().rstrip("\\/") + os.sep
+        if out.lower().startswith(inside):
             sys.exit("Please write the report outside the folders being scanned.")
+        if db and db.lower().startswith(inside):
+            sys.exit("Please keep the --db file outside the folders being scanned.")
     t0 = time.perf_counter()
+    started = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    res = find_duplicates(roots, args.min_size, args.exclude, args.scan_only)
-    if args.scan_only:
-        print("--scan-only: stopping here. The size above is the most stage 4 could read.")
-        return res
+    store = Store(db) if db else None
+    try:
+        res = find_duplicates(roots, args.min_size, args.exclude, args.scan_only, store=store)
+        if args.scan_only:
+            print("--scan-only: stopping here. The size above is the most stage 4 could read.")
+            return res
+        if store is not None:
+            options = {"min_size": args.min_size, "exclude": args.exclude}
+            scan_id = store.save_scan(roots, options, res, started)
+    except KeyboardInterrupt:
+        if store is not None:
+            print("\nStopped. Hashes computed so far are saved; run the same command to carry on.")
+        raise
+    finally:
+        if store is not None:
+            store.close()
 
     write_report(res.groups, out)
     print(f"Stage 5: {len(res.groups):,} duplicate groups, {res.dup_files:,} files, "
           f"{fmt(res.wasted)} could be freed by keeping one copy of each")
     print(f"Report: {out}")
+    if db:
+        print(f"Saved as scan {scan_id} in {db}")
     print(f"Total time: {time.perf_counter() - t0:.1f} s")
     return res
 
