@@ -87,9 +87,15 @@ def scan_entries(root, min_size, skip=SKIP_DIRS, skip_paths=()):
             yield entry.path, st.st_size, st.st_mtime_ns
 
 
-def regroup(groups, key_func, label, log=print):
+class ScanCancelled(Exception):
+    """Raised by a progress callback to stop a scan. Hashes already saved to a
+    Store are kept, so the same scan can carry on later."""
+
+
+def regroup(groups, key_func, label, log=print, progress=None):
     """Split every (size, paths) group by key_func(path, size); keep sub-groups of 2+.
 
+    progress, if given, is called as progress(done, total) after each file.
     Returns a list of (size, paths, key)."""
     total = sum(len(paths) for _, paths in groups)
     done = 0
@@ -102,6 +108,8 @@ def regroup(groups, key_func, label, log=print):
             done += 1
             if key is not None:
                 buckets[key].append(p)
+            if progress:
+                progress(done, total)
             if log and (done % 500 == 0 or done == total):
                 print(f"\r  {label}: {done:,}/{total:,} files", end="", flush=True)
         for key, same in buckets.items():
@@ -112,12 +120,17 @@ def regroup(groups, key_func, label, log=print):
     return result
 
 
-def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, store=None):
+def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, store=None,
+                    progress=None):
     """Run stages 1 to 4 over one or more folders and return a ScanResult.
 
     `log` receives progress lines; pass None for silence. With `store`
     (a dupefinder.store.Store), hashes of files whose size and modified time
-    are unchanged are reused, and new hashes are saved as they are computed."""
+    are unchanged are reused, and new hashes are saved as they are computed.
+
+    `progress`, for a UI, is called as progress(stage, done, total): stage 1
+    (finding files; total is None), 3 (first 64 KB) or 4 (full hash). It may
+    raise ScanCancelled to stop the scan."""
     say = log or (lambda *a, **k: None)
     res = ScanResult(scan_only=scan_only)
     t0 = time.perf_counter()
@@ -133,6 +146,8 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, s
         mtimes[path] = mtime
         res.n_files += 1
         res.n_bytes += size
+        if progress and res.n_files % 100 == 0:
+            progress(1, res.n_files, None)
         if log and res.n_files % 5000 == 0:
             print(f"\r  {res.n_files:,} files found", end="", flush=True)
     say(f"\r  {res.n_files:,} files, {fmt(res.n_bytes)}, in {time.perf_counter() - t0:.1f} s")
@@ -162,7 +177,8 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, s
 
     # Stage 3: hash the first 64 KB
     say(f"Stage 3: comparing the first {PARTIAL_BYTES // 1024} KB of each candidate")
-    groups = regroup(groups, partial, "partial hash", log)
+    groups = regroup(groups, partial, "partial hash", log,
+                     progress and (lambda d, t: progress(3, d, t)))
 
     # Stage 4: full hash. Files no bigger than 64 KB were already read in
     # full by stage 3, so their partial hash is their full hash.
@@ -172,7 +188,8 @@ def find_duplicates(roots, min_size=1, exclude=(), scan_only=False, log=print, s
     say(f"Stage 4: full hash of {sum(len(p) for _, p in big):,} files "
         f"({fmt(res.full_hash_bytes)})")
     t4 = time.perf_counter()
-    final = regroup(big, full, "full hash", log)
+    final = regroup(big, full, "full hash", log,
+                    progress and (lambda d, t: progress(4, d, t)))
     secs = time.perf_counter() - t4
     if store is not None:
         store.commit()
