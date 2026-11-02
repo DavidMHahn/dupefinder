@@ -71,3 +71,30 @@ class ScanWorker(QObject):
             self.failed.emit(f"{type(e).__name__}: {e}")
             return
         self.finished.emit(res, scan_id)
+
+
+class DryRunWorker(QObject):
+    """Checks every planned move in a QThread. Emits progress(done, total), then
+    finished(dry_run, dry_run_id) or failed(message). Never moves a file."""
+
+    progress = Signal(int, int)
+    finished = Signal(object, int)
+    failed = Signal(str)
+
+    def __init__(self, scan_id, plans, quarantines, db_path=None):
+        super().__init__()
+        self.scan_id = scan_id
+        self.plans = plans
+        self.quarantines = quarantines
+        self.db_path = os.path.abspath(db_path or default_db_path())
+
+    def run(self):
+        from ..dryrun import run as dry_run
+        try:
+            dry = dry_run(self.plans, self.quarantines, progress=self.progress.emit)
+            with Store(self.db_path) as store:
+                run_id = store.save_dry_run(self.scan_id, dry)
+        except Exception as e:          # shown to the person, never a crash
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        self.finished.emit(dry, run_id)

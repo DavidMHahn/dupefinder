@@ -1,6 +1,6 @@
 """A small SQLite database for scan data.
 
-Three jobs:
+Four jobs:
 
 1. Hash cache. Every hash the finder computes is saved with the file's path,
    size and modified time. A later scan reuses it when the size and modified
@@ -15,6 +15,9 @@ Three jobs:
 
 3. Keeper choices. The rules and hand-picked keepers chosen for a scan, so
    the person can leave and come back, and the Dry run step can use them.
+
+4. Dry runs. Every planned move with its checks, so the Quarantine step
+   carries out exactly what the person previewed.
 
 The database lives OUTSIDE the scanned folders (the finder refuses otherwise),
 and it never stores file contents, only paths, sizes, dates and hashes.
@@ -69,6 +72,24 @@ CREATE TABLE IF NOT EXISTS keeper_picks (
     path      TEXT NOT NULL,      -- the copy the person chose to keep by hand
     PRIMARY KEY (scan_id, grp)
 );
+CREATE TABLE IF NOT EXISTS dry_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id     INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    created     TEXT NOT NULL,
+    quarantines TEXT NOT NULL,    -- JSON: {drive: quarantine folder}
+    n_moves     INTEGER NOT NULL,
+    freed       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dry_run_moves (
+    dry_run_id  INTEGER NOT NULL REFERENCES dry_runs(id) ON DELETE CASCADE,
+    grp         INTEGER NOT NULL,
+    status      TEXT NOT NULL,
+    kept        TEXT NOT NULL,
+    original    TEXT NOT NULL,
+    dest        TEXT NOT NULL,
+    size        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dry_run_moves_run ON dry_run_moves(dry_run_id);
 """
 
 COMMIT_SECONDS = 5.0
@@ -200,3 +221,35 @@ class Store:
         row = self.db.execute("SELECT rules FROM keeper_rules WHERE scan_id = ?", (scan_id,)).fetchone()
         picks = dict(self.db.execute("SELECT grp, path FROM keeper_picks WHERE scan_id = ?", (scan_id,)))
         return (json.loads(row[0]) if row else None), picks
+
+    def choices_updated(self, scan_id):
+        """When the scan's keeper choices were last saved, or None."""
+        row = self.db.execute("SELECT updated FROM keeper_rules WHERE scan_id = ?", (scan_id,)).fetchone()
+        return row[0] if row else None
+
+    # ------------------------------------------------------------ dry runs
+    def save_dry_run(self, scan_id, dry):
+        """Store a dryrun.DryRun. Returns its id."""
+        cur = self.db.execute(
+            "INSERT INTO dry_runs (scan_id, created, quarantines, n_moves, freed) VALUES (?, ?, ?, ?, ?)",
+            (scan_id, _now(), json.dumps(dry.quarantines), len(dry.moving), dry.freed))
+        run_id = cur.lastrowid
+        self.db.executemany(
+            "INSERT INTO dry_run_moves (dry_run_id, grp, status, kept, original, dest, size) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ((run_id, m.group, m.status, m.kept, m.original, m.dest, m.size) for m in dry.moves))
+        self.commit()
+        return run_id
+
+    def latest_dry_run(self, scan_id):
+        """The newest dry run of a scan as (id, created, DryRun), or None."""
+        from .dryrun import DryRun, Move
+        row = self.db.execute("SELECT id, created, quarantines FROM dry_runs WHERE scan_id = ? "
+                              "ORDER BY id DESC LIMIT 1", (scan_id,)).fetchone()
+        if not row:
+            return None
+        run_id, created, quarantines = row
+        moves = [Move(*r) for r in self.db.execute(
+            "SELECT grp, status, kept, original, dest, size FROM dry_run_moves "
+            "WHERE dry_run_id = ? ORDER BY rowid", (run_id,))]
+        return run_id, created, DryRun(moves, json.loads(quarantines))

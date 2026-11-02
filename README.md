@@ -12,8 +12,8 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 
 | Path | What it is |
 |---|---|
-| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, `review` (groups results by folder), `keepers` (decides which copy of each group stays), and `store` (the SQLite hash cache, saved scans and keeper choices). Each has functions a UI can call and a `main()` for the command line. |
-| `dupefinder/app/` | The desktop app (work in progress). Steps 1 (Scan), 2 (Review groups) and 3 (Choose keepers) work; the other five are shown but not built yet. |
+| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, `review` (groups results by folder), `keepers` (decides which copy of each group stays), `dryrun` (checks every planned move without moving anything), and `store` (the SQLite hash cache, saved scans, keeper choices and dry runs). Each has functions a UI can call and a `main()` for the command line. |
+| `dupefinder/app/` | The desktop app (work in progress). Steps 1 to 4 (Scan, Review groups, Choose keepers, Dry run) work; the other four are shown but not built yet. |
 | `tests/` | Automated tests, including the edge cases found on real drives. They run on Windows and Linux for every pull request. |
 | `engine/find_dupes.py` | Read-only scan of one or more folders or drives: size, then first 64 KB, then full BLAKE2b hash. Writes a CSV report. |
 | `engine/quarantine_dupes.py` | Moves extra copies to a quarantine folder on the same drive. Dry run by default; `--go` to move, `--verify` to re-hash first, `--undo LOG` to restore. Keeper rules: `--only-under`, `--prefer`, `--skip-name`. |
@@ -56,6 +56,8 @@ Add one or more drives or folders, optionally folders to skip, and click **Start
 
 **Choose keepers** decides which copy of each group stays. Pick the rule (shortest path, oldest, newest or alphabetical), optionally list folders whose copies you want to keep first, folders to clean up (copies elsewhere are never moved), and file names that never move (album art, `desktop.ini` and similar are listed by default). Double-click any copy to keep it instead; **Use the rules for this group** undoes that. The total that would be freed updates as you go, and your choices are saved with the scan, so you can leave and come back. Nothing on this screen moves a file either.
 
+**Dry run** previews every move. Each drive gets a quarantine folder (by default `_dupes_quarantine` at the top of the drive; you can change it, but it must be on the same drive so moves are instant). It checks each copy exactly as the Quarantine step will: the copy and its kept copy are still there and unchanged in size, the copy is not inside a backup program's folder (File History, Windows Backup, Smart Switch, Seagate Toolkit, Time Machine), it is on the same drive as its quarantine folder, and nothing is already at its quarantine path. The result is saved, and **Save the plan as CSV** writes it in the same format as `quarantine_dupes.py`'s dry run log. Nothing is moved.
+
 ## Running the tests
 
 ```powershell
@@ -65,5 +67,5 @@ py -m pytest
 
 ## Next steps
 
-1. Desktop app: the Dry run screen (pick a quarantine folder per drive, preview every move), then Quarantine and Verify.
+1. Desktop app: the Quarantine screen (carry out the saved dry run, with undo), then Verify.
 2. A Windows installer, so people don't need Python.

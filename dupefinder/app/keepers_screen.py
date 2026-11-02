@@ -117,7 +117,6 @@ class KeepersScreen(QWidget):
         self.next_button = QPushButton("Preview the moves (dry run)  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Dry run screen comes next.")
         buttons.addWidget(self.next_button)
         layout.addLayout(buttons)
 
@@ -184,7 +183,7 @@ class KeepersScreen(QWidget):
             if t.stays:
                 text += f" {t.stays:,} other copies stay because of a folder or name rule."
             self.summary.setText(text)
-        self.next_button.setEnabled(False)      # until the Dry run screen exists
+        self.next_button.setEnabled(t.moves > 0)
         self._fill_tree()
 
     # ------------------------------------------------------------ tree
