@@ -174,7 +174,6 @@ class ScanScreen(QWidget):
         self.next_button = QPushButton("Review duplicates  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Review screen comes next.")
         buttons.addWidget(self.export_button)
         buttons.addStretch()
         buttons.addWidget(self.next_button)
@@ -246,6 +245,7 @@ class ScanScreen(QWidget):
             f"Looked at {res.n_files:,} files ({fmt(res.n_bytes)}). Nothing was changed.{reused}")
         self.title.setText("Scan complete" if res.groups else "Scan complete: no duplicates found")
         self.export_button.setEnabled(bool(res.groups))
+        self.next_button.setEnabled(bool(res.groups))
         self.results.setVisible(True)
         self.scanned.emit(res, scan_id)
 

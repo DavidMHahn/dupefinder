@@ -120,3 +120,49 @@ def test_adding_the_same_folder_twice(qapp, tmp_path):
     screen.roots.add(str(tmp_path))
     screen.roots.add(str(tmp_path) + os.sep)
     assert screen.roots.folders() == [os.path.normpath(str(tmp_path))]
+
+
+def test_review_after_scan(qapp, data, tmp_path):
+    w = MainWindow(db_path=str(tmp_path / "db" / "d.db"))
+    w.scan.roots.add(str(data))
+    w.scan.start_button.click()
+    wait_for(qapp, lambda: w.scan.thread is None)
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups"]
+    assert w.scan.next_button.isEnabled()
+    w.scan.next_button.click()
+    assert w.pages.currentWidget() is w.review
+
+    r = w.review
+    assert r.summary.text().startswith("10.21 MB could be freed: 3 groups, 7 files")
+    assert r.table.rowCount() == len(r.sets) >= 1
+    # biggest saving first, and the first row is selected with its files listed
+    first = r.selected_set()
+    assert first.wasted == max(fs.wasted for fs in r.sets)
+    assert r.tree.topLevelItemCount() == len(first.groups)
+    child = r.tree.topLevelItem(0).child(0)
+    assert os.path.isfile(child.data(0, 0x0100))                  # Qt.UserRole holds the path
+
+
+def test_review_filter(qapp, data, tmp_path):
+    db = str(tmp_path / "db" / "d.db")
+    ScanWorker([str(data)], db_path=db).run()
+    w = MainWindow(db_path=db)
+    assert "2   Review groups" in w.enabled_steps()                # a saved scan exists
+    r = w.review
+    r.filter.setText("notes")
+    assert r.table.rowCount() == 1
+    assert "notes" in r.tree.topLevelItem(0).child(0).text(0)
+    r.filter.setText("no such thing")
+    assert r.table.rowCount() == 0 and r.detail_title.text() == "Nothing matches the filter"
+
+
+def test_review_picks_earlier_scan(qapp, data, tmp_path):
+    db = str(tmp_path / "db" / "d.db")
+    ScanWorker([str(data)], db_path=db).run()
+    ScanWorker([str(data / "a")], db_path=db).run()              # second scan: no duplicates
+    w = MainWindow(db_path=db)
+    r = w.review
+    assert r.scans.count() == 2
+    assert r.summary.text() == "No duplicates in this scan."      # newest first
+    r.scans.setCurrentIndex(1)
+    assert r.summary.text().startswith("10.21 MB")
