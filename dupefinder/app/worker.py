@@ -168,3 +168,49 @@ class UndoWorker(QObject):
             self.failed.emit(f"{type(e).__name__}: {e}")
             return
         self.finished.emit(back, total, problems)
+
+
+class _Stop(Exception):
+    pass
+
+
+class VerifyWorker(QObject):
+    """Re-reads every quarantined copy and its kept copy in a QThread. READ-ONLY.
+    Emits progress(done, total), then finished(verdict), cancelled() or failed(message)."""
+
+    progress = Signal(int, int)
+    finished = Signal(object)
+    cancelled = Signal()
+    failed = Signal(str)
+
+    def __init__(self, run_id, log_path, db_path=None):
+        super().__init__()
+        self.run_id, self.log_path = run_id, log_path
+        self.db_path = os.path.abspath(db_path or default_db_path())
+        self._stop = False
+        self._last = 0.0
+
+    def stop(self):
+        self._stop = True
+
+    def _progress(self, done, total):
+        if self._stop:
+            raise _Stop()
+        now = time.monotonic()
+        if done == total or now - self._last >= 0.1:
+            self._last = now
+            self.progress.emit(done, total)
+
+    def run(self):
+        from ..verify import verify_log
+        try:
+            verdict = verify_log(self.log_path, self._progress)
+            with Store(self.db_path) as store:
+                store.save_verification(self.run_id, verdict)
+        except _Stop:
+            self.cancelled.emit()
+            return
+        except Exception as e:
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        self.finished.emit(verdict)
