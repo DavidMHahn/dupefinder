@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from .review_screen import ReviewScreen
 from .scan_screen import ScanScreen
+from .worker import default_db_path
 
 STEPS = [
     ("Scan", "Find duplicate files. Only reads."),
@@ -21,6 +23,8 @@ STEPS = [
     ("Wait", "Live with it for a week or two."),
     ("Delete", "Empty the quarantine for good."),
 ]
+
+BUILT_STEPS = 2          # steps that have a screen so far
 
 STYLE = """
 QListWidget#steps { border: none; font-size: 14px; }
@@ -42,14 +46,18 @@ class MainWindow(QMainWindow):
         self.steps.setFixedWidth(220)
         for i, (name, tip) in enumerate(STEPS, 1):
             item = QListWidgetItem(f"{i}   {name}")
-            item.setToolTip(tip if i == 1 else f"{tip} (coming next)")
-            if i > 1:
-                item.setFlags(item.flags() & ~Qt.ItemIsEnabled & ~Qt.ItemIsSelectable)
+            item.setToolTip(tip if i <= BUILT_STEPS else f"{tip} (coming next)")
             self.steps.addItem(item)
 
+        db_path = db_path or default_db_path()
         self.pages = QStackedWidget()
         self.scan = ScanScreen(db_path)
+        self.review = ReviewScreen(db_path)
         self.pages.addWidget(self.scan)
+        self.pages.addWidget(self.review)
+        self.scan.next_button.clicked.connect(lambda: self.go(2))
+        self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
+        self.steps.currentRowChanged.connect(lambda row: self.pages.setCurrentIndex(row))
 
         side = QVBoxLayout()
         side.setContentsMargins(12, 20, 0, 12)
@@ -69,7 +77,24 @@ class MainWindow(QMainWindow):
         layout.addLayout(side)
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
+        self.review.refresh_scans()
+        self._set_enabled(2 if self.review.scans.count() else 1)
         self.steps.setCurrentRow(0)
+
+    def _set_enabled(self, upto):
+        """Steps 1..upto can be opened; the rest are greyed out."""
+        for i in range(self.steps.count()):
+            item = self.steps.item(i)
+            on = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+            item.setFlags(item.flags() | on if i < upto else item.flags() & ~on)
+
+    def _scanned(self, scan_id):
+        self.review.scan_id = None
+        self.review.refresh_scans(select_id=scan_id)
+        self._set_enabled(2)
+
+    def go(self, step):
+        self.steps.setCurrentRow(step - 1)
 
     def enabled_steps(self):
         return [self.steps.item(i).text() for i in range(self.steps.count())

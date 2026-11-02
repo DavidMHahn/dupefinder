@@ -12,8 +12,8 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 
 | Path | What it is |
 |---|---|
-| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, and `store` (the SQLite hash cache and saved scans). Each has functions a UI can call and a `main()` for the command line. |
-| `dupefinder/app/` | The desktop app (work in progress). Step 1, Scan, works; the other seven steps are shown but not built yet. |
+| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, `review` (groups results by folder), and `store` (the SQLite hash cache and saved scans). Each has functions a UI can call and a `main()` for the command line. |
+| `dupefinder/app/` | The desktop app (work in progress). Steps 1 (Scan) and 2 (Review groups) work; the other six are shown but not built yet. |
 | `tests/` | Automated tests, including the edge cases found on real drives. They run on Windows and Linux for every pull request. |
 | `engine/find_dupes.py` | Read-only scan of one or more folders or drives: size, then first 64 KB, then full BLAKE2b hash. Writes a CSV report. |
 | `engine/quarantine_dupes.py` | Moves extra copies to a quarantine folder on the same drive. Dry run by default; `--go` to move, `--verify` to re-hash first, `--undo LOG` to restore. Keeper rules: `--only-under`, `--prefer`, `--skip-name`. |
@@ -52,6 +52,8 @@ py -m dupefinder.app
 
 Add one or more drives or folders, optionally folders to skip, and click **Start scan**. Scanning only reads files. Results are saved in `%LOCALAPPDATA%\dupefinder\dupefinder.db`, so scanning the same drive again only reads new or changed files, and a stopped scan carries on where it stopped. **Save report as CSV** writes the same report as `find_dupes.py`.
 
+**Review groups** shows a scan's duplicates gathered by the folders that hold the copies, biggest saving first, with the identical files of each folder set below. You can filter by folder or file name, reopen any earlier scan, and open a file's folder in File Explorer. Nothing on this screen changes a file.
+
 ## Running the tests
 
 ```powershell
@@ -61,5 +63,5 @@ py -m pytest
 
 ## Next steps
 
-1. Desktop app: the Review groups screen, then Choose keepers and Dry run.
+1. Desktop app: the Choose keepers screen, then Dry run.
 2. A Windows installer, so people don't need Python.
