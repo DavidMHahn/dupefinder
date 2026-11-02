@@ -190,7 +190,6 @@ class DryRunScreen(QWidget):
         self.next_button = QPushButton("Move to quarantine  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Quarantine screen comes next.")
         buttons.addWidget(self.next_button)
         layout.addLayout(buttons)
 
@@ -311,7 +310,7 @@ class DryRunScreen(QWidget):
         self.stage.setText(message)
         self.model.set_moves(dry.moves if dry else [])
         self.export_button.setEnabled(dry is not None)
-        self.next_button.setEnabled(False)          # until the Quarantine screen exists
+        self.next_button.setEnabled(dry is not None and bool(dry.moving))
         if dry is None:
             self.summary.setText("")
             self.reasons.setText("")

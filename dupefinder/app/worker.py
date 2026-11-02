@@ -98,3 +98,73 @@ class DryRunWorker(QObject):
             self.failed.emit(f"{type(e).__name__}: {e}")
             return
         self.finished.emit(dry, run_id)
+
+
+class QuarantineWorker(QObject):
+    """Carries out a saved dry run in a QThread: moves copies to quarantine, never deletes.
+    Emits progress(done, total), then finished(result) or failed(message)."""
+
+    progress = Signal(int, int)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, scan_id, dry_run_id, dry, verify=True, db_path=None):
+        super().__init__()
+        self.scan_id, self.dry_run_id, self.dry, self.verify = scan_id, dry_run_id, dry, verify
+        self.db_path = os.path.abspath(db_path or default_db_path())
+        self._stop = False
+        self._last = 0.0
+
+    def stop(self):
+        """Stop before the next file. Copies already moved stay moved, and are logged."""
+        self._stop = True
+
+    def _progress(self, done, total):
+        from ..mover import Stopped
+        if self._stop:
+            raise Stopped()
+        now = time.monotonic()
+        if done == total or now - self._last >= 0.1:
+            self._last = now
+            self.progress.emit(done, total)
+
+    def run(self):
+        from .. import mover
+        try:
+            log_path = mover.log_name(os.path.join(os.path.dirname(self.db_path), "logs"))
+            with Store(self.db_path) as store:
+                run_id = store.start_quarantine_run(self.scan_id, self.dry_run_id, log_path)
+            res = mover.run(self.dry, log_path, self.verify, self._progress)
+            with Store(self.db_path) as store:
+                store.finish_quarantine_run(run_id, res)
+        except Exception as e:          # shown to the person, never a crash
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        self.finished.emit(res)
+
+
+class UndoWorker(QObject):
+    """Puts every file a moves log says was moved back where it was.
+    Emits finished(restored, total, problems) or failed(message)."""
+
+    finished = Signal(int, int, list)
+    failed = Signal(str)
+
+    def __init__(self, run_id, log_path, db_path=None):
+        super().__init__()
+        self.run_id, self.log_path = run_id, log_path
+        self.db_path = os.path.abspath(db_path or default_db_path())
+
+    def run(self):
+        from ..quarantine import undo
+        notes = []
+        try:
+            back, total = undo(self.log_path, log=notes.append)
+            problems = [n.strip() for n in notes if "skipped" in n]
+            if not problems:
+                with Store(self.db_path) as store:
+                    store.mark_undone(self.run_id)
+        except Exception as e:
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        self.finished.emit(back, total, problems)

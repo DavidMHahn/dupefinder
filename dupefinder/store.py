@@ -1,6 +1,6 @@
 """A small SQLite database for scan data.
 
-Four jobs:
+Five jobs:
 
 1. Hash cache. Every hash the finder computes is saved with the file's path,
    size and modified time. A later scan reuses it when the size and modified
@@ -18,6 +18,9 @@ Four jobs:
 
 4. Dry runs. Every planned move with its checks, so the Quarantine step
    carries out exactly what the person previewed.
+
+5. Quarantine runs. When a dry run was carried out and where its moves log
+   is. The log itself (a CSV) stays the record of what moved, for undo and verify.
 
 The database lives OUTSIDE the scanned folders (the finder refuses otherwise),
 and it never stores file contents, only paths, sizes, dates and hashes.
@@ -90,6 +93,19 @@ CREATE TABLE IF NOT EXISTS dry_run_moves (
     size        INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS dry_run_moves_run ON dry_run_moves(dry_run_id);
+CREATE TABLE IF NOT EXISTS quarantine_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id     INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    dry_run_id  INTEGER NOT NULL REFERENCES dry_runs(id) ON DELETE CASCADE,
+    started     TEXT NOT NULL,
+    finished    TEXT,             -- NULL while running, or if the app was closed mid-way
+    log_path    TEXT NOT NULL,    -- the moves log: the record of truth for undo and verify
+    moved       INTEGER,
+    freed       INTEGER,
+    skipped     INTEGER,
+    stopped     INTEGER,          -- 1 if the person stopped it part-way
+    undone      TEXT              -- when everything was put back, or NULL
+);
 """
 
 COMMIT_SECONDS = 5.0
@@ -253,3 +269,34 @@ class Store:
             "SELECT grp, status, kept, original, dest, size FROM dry_run_moves "
             "WHERE dry_run_id = ? ORDER BY rowid", (run_id,))]
         return run_id, created, DryRun(moves, json.loads(quarantines))
+
+    def current_dry_run(self, scan_id):
+        """The newest dry run, if keeper choices have not changed since it ran; else None."""
+        last = self.latest_dry_run(scan_id)
+        updated = self.choices_updated(scan_id)
+        return last if last and (updated is None or last[1] >= updated) else None
+
+    # ------------------------------------------------------------ quarantine runs
+    def start_quarantine_run(self, scan_id, dry_run_id, log_path):
+        cur = self.db.execute("INSERT INTO quarantine_runs (scan_id, dry_run_id, started, log_path) "
+                              "VALUES (?, ?, ?, ?)", (scan_id, dry_run_id, _now(), log_path))
+        self.commit()
+        return cur.lastrowid
+
+    def finish_quarantine_run(self, run_id, result):
+        self.db.execute("UPDATE quarantine_runs SET finished = ?, moved = ?, freed = ?, skipped = ?, "
+                        "stopped = ? WHERE id = ?",
+                        (_now(), result.moved, result.freed, result.skipped, int(result.stopped), run_id))
+        self.commit()
+
+    def mark_undone(self, run_id):
+        self.db.execute("UPDATE quarantine_runs SET undone = ? WHERE id = ?", (_now(), run_id))
+        self.commit()
+
+    def quarantine_runs(self, scan_id):
+        """Newest first, as dicts."""
+        cols = ["id", "dry_run_id", "started", "finished", "log_path", "moved", "freed", "skipped",
+                "stopped", "undone"]
+        rows = self.db.execute(f"SELECT {', '.join(cols)} FROM quarantine_runs WHERE scan_id = ? "
+                               "ORDER BY id DESC", (scan_id,))
+        return [dict(zip(cols, r)) for r in rows]

@@ -131,6 +131,26 @@ class DryRun:
         return dict(Counter(m.status for m in self.skipped).most_common())
 
 
+def check(kept, kept_ok, path, size, dest, qroots, qdev):
+    """The status one planned move gets. Used by the dry run and again, just before
+    each move, by the Quarantine step. kept_ok: the kept copy is there with this size."""
+    if under(kept, qroots):
+        return SKIP_KEEPER_IN_Q
+    if under(path, qroots):
+        return SKIP_IN_Q
+    if in_backup_folder(path):
+        return SKIP_BACKUP
+    if _size(path) != size:
+        return SKIP_GONE
+    if not kept_ok:
+        return SKIP_KEEPER_GONE
+    if _device(path) != qdev:
+        return SKIP_OTHER_DRIVE
+    if os.path.lexists(dest):
+        return SKIP_DEST
+    return WOULD_MOVE
+
+
 def volumes(plans):
     """{volume: number of copies the plan would move from it}, in path order."""
     counts = Counter(volume(p) for gp in plans for p, s in gp.status.items() if s == MOVE)
@@ -159,22 +179,7 @@ def run(plans, quarantines=None, progress=None):
                 progress(done, total)
             v = volume(p)
             dest = quarantine_path(q[v], v, p)
-            if under(kept, qroots):
-                status = SKIP_KEEPER_IN_Q
-            elif under(p, qroots):
-                status = SKIP_IN_Q
-            elif in_backup_folder(p):
-                status = SKIP_BACKUP
-            elif _size(p) != gp.size:
-                status = SKIP_GONE
-            elif not kept_ok:
-                status = SKIP_KEEPER_GONE
-            elif _device(p) != qdev[v]:
-                status = SKIP_OTHER_DRIVE
-            elif os.path.lexists(dest):
-                status = SKIP_DEST
-            else:
-                status = WOULD_MOVE
+            status = check(kept, kept_ok, p, gp.size, dest, qroots, qdev[v])
             out.moves.append(Move(gp.number, status, kept, p,
                                   dest if status in (WOULD_MOVE, SKIP_DEST) else "", gp.size))
     if progress:

@@ -127,7 +127,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     w.scan.roots.add(str(data))
     w.scan.start_button.click()
     wait_for(qapp, lambda: w.scan.thread is None)
-    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run"]
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
     assert w.pages.currentWidget() is w.review
@@ -265,7 +265,7 @@ def test_dry_run_screen(qapp, data, tmp_path):
     assert not (tmp_path / "_q").exists()                 # nothing moved
     out = d.export_csv(str(tmp_path / "plan.csv"))
     assert open(out, encoding="utf-8-sig").read().count("would move") == 4
-    assert not d.next_button.isEnabled()                  # Quarantine screen not built yet
+    assert d.next_button.isEnabled()
 
     # come back later: the saved dry run is shown, until a keeper choice changes
     again = MainWindow(db_path=db)
@@ -297,3 +297,63 @@ def test_dry_run_filter_and_skips(qapp, data, tmp_path):
 def test_quarantine_must_be_on_the_same_drive(qapp, data, tmp_path):
     w, d, _ = dryrun_window(data, tmp_path)
     assert not d.set_quarantine("Z:" + os.sep, str(tmp_path / "_q2"))
+
+
+def quarantine_window(qapp, data, tmp_path):
+    w, d, db = dryrun_window(data, tmp_path)
+    d.run_button.click()
+    wait_for(qapp, lambda: d.thread is None)
+    d.next_button.click()
+    q = w.quarantine
+    assert w.pages.currentWidget() is q
+    q.confirm = lambda title, text: True
+    q.errors = []
+    q.error = lambda title, text: q.errors.append(text)
+    return w, q, db
+
+
+def files(root):
+    return sorted(str(p) for p in root.rglob("*") if p.is_file())
+
+
+def test_quarantine_moves_and_puts_back(qapp, data, tmp_path):
+    w, q, db = quarantine_window(qapp, data, tmp_path)
+    before = files(data)
+    assert q.ready.text().startswith("Ready to move 4 copies to quarantine, freeing 10.21 MB")
+    assert q.start_button.text() == "Move 4 copies to quarantine"
+    q.start_button.click()
+    wait_for(qapp, lambda: q.thread is None)
+    assert q.result_title.text() == "Moved 4 copies to quarantine, freeing 10.21 MB"
+    assert q.stage.text() == "Done. Nothing was deleted."
+    assert len(files(data)) == len(before) - 4 and len(files(tmp_path / "_q")) == 4
+    assert not q.start_button.isEnabled() and "has been carried out" in q.ready.text()
+    log = q.last_run["log_path"]
+    assert os.path.dirname(os.path.dirname(log)) == os.path.dirname(db)       # <db folder>/logs
+
+    again = MainWindow(db_path=db)                    # come back later: undo still available
+    again.go(5)
+    a = again.quarantine
+    a.confirm = lambda title, text: True
+    assert a.undo_button.isEnabled()
+    a.undo_button.click()
+    wait_for(qapp, lambda: a.thread is None)
+    assert files(data) == before and files(tmp_path / "_q") == []
+    assert a.result_title.text() == "Everything was put back"
+    assert a.start_button.isEnabled()                 # the same dry run can be carried out again
+
+
+def test_quarantine_needs_a_current_dry_run(qapp, data, tmp_path):
+    db = str(tmp_path / "db" / "d.db")
+    ScanWorker([str(data)], db_path=db).run()
+    w = MainWindow(db_path=db)
+    w.go(5)
+    assert "Run the dry run first" in w.quarantine.ready.text()
+    assert not w.quarantine.start_button.isEnabled()
+
+
+def test_quarantine_cancelled_confirmation_moves_nothing(qapp, data, tmp_path):
+    w, q, _ = quarantine_window(qapp, data, tmp_path)
+    before = files(data)
+    q.confirm = lambda title, text: False
+    q.start_button.click()
+    assert q.thread is None and files(data) == before
