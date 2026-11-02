@@ -85,7 +85,6 @@ class VerifyScreen(QWidget):
         self.next_button = QPushButton("Wait before deleting  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Wait screen comes next.")
         buttons.addWidget(self.next_button)
         layout.addLayout(buttons)
 
@@ -100,7 +99,7 @@ class VerifyScreen(QWidget):
             return
         self.scan_id = scan_id
         with Store(self.db_path) as st:
-            self.runs = [r for r in st.quarantine_runs(scan_id) if not r["undone"] and r["moved"] != 0]
+            self.runs = [r for r in st.quarantine_runs(scan_id) if not r["undone"] and not r["deleted"] and r["moved"] != 0]
         self.picker.blockSignals(True)
         self.picker.clear()
         for r in self.runs:
@@ -191,7 +190,7 @@ class VerifyScreen(QWidget):
         self.verdict = verdict
         self.panel.setVisible(verdict is not None)
         self.problems.clear()
-        self.next_button.setEnabled(False)          # until the Wait screen exists
+        self.next_button.setEnabled(verdict is not None and verdict.safe)
         if verdict is None:
             self.spacer.setVisible(True)
             return

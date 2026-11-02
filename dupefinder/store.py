@@ -21,7 +21,8 @@ Five jobs:
 
 5. Quarantine runs. When a dry run was carried out and where its moves log
    is. The log itself (a CSV) stays the record of what moved, for undo and verify.
-   Each verification of a run is kept too (when, and what it found).
+   Each verification of a run is kept too (when, and what it found), as are
+   the chosen waiting time and any deletion.
 
 The database lives OUTSIDE the scanned folders (the finder refuses otherwise),
 and it never stores file contents, only paths, sizes, dates and hashes.
@@ -115,10 +116,26 @@ CREATE TABLE IF NOT EXISTS verifications (
     total       INTEGER NOT NULL,
     problems    TEXT NOT NULL     -- JSON list, at most MAX_PROBLEMS_SAVED
 );
+CREATE TABLE IF NOT EXISTS waits (
+    run_id      INTEGER PRIMARY KEY REFERENCES quarantine_runs(id) ON DELETE CASCADE,
+    days        INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS deletions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES quarantine_runs(id) ON DELETE CASCADE,
+    started     TEXT NOT NULL,
+    finished    TEXT,
+    log_path    TEXT NOT NULL,
+    deleted     INTEGER,
+    freed       INTEGER,
+    kept        INTEGER,          -- copies left in quarantine because a check failed
+    stopped     INTEGER
+);
 """
 
 COMMIT_SECONDS = 5.0
 MAX_PROBLEMS_SAVED = 5000
+DEFAULT_WAIT_DAYS = 14
 KINDS = ("partial", "full")       # the only column names ever put into SQL text
 
 
@@ -304,12 +321,47 @@ class Store:
         self.commit()
 
     def quarantine_runs(self, scan_id):
-        """Newest first, as dicts."""
+        """Newest first, as dicts. Each also has wait_days, and deleted (time or None)."""
         cols = ["id", "dry_run_id", "started", "finished", "log_path", "moved", "freed", "skipped",
                 "stopped", "undone"]
-        rows = self.db.execute(f"SELECT {', '.join(cols)} FROM quarantine_runs WHERE scan_id = ? "
-                               "ORDER BY id DESC", (scan_id,))
+        rows = self.db.execute(
+            f"SELECT {', '.join('q.' + c for c in cols)}, w.days, "
+            "(SELECT MAX(d.finished) FROM deletions d WHERE d.run_id = q.id AND d.stopped = 0) "
+            "FROM quarantine_runs q LEFT JOIN waits w ON w.run_id = q.id "
+            "WHERE q.scan_id = ? ORDER BY q.id DESC", (scan_id,))
+        out = []
+        for r in rows:
+            d = dict(zip(cols, r))
+            d["wait_days"] = r[-2] if r[-2] is not None else DEFAULT_WAIT_DAYS
+            d["deleted"] = r[-1]
+            out.append(d)
+        return out
+
+    def set_wait(self, run_id, days):
+        self.db.execute("INSERT OR REPLACE INTO waits (run_id, days) VALUES (?, ?)", (run_id, days))
+        self.commit()
+
+    def start_deletion(self, run_id, log_path):
+        cur = self.db.execute("INSERT INTO deletions (run_id, started, log_path) VALUES (?, ?, ?)",
+                              (run_id, _now(), log_path))
+        self.commit()
+        return cur.lastrowid
+
+    def finish_deletion(self, deletion_id, result):
+        self.db.execute("UPDATE deletions SET finished = ?, deleted = ?, freed = ?, kept = ?, stopped = ? "
+                        "WHERE id = ?", (_now(), result.deleted, result.freed, len(result.kept),
+                                         int(result.stopped), deletion_id))
+        self.commit()
+
+    def deletions(self, run_id):
+        cols = ["id", "started", "finished", "log_path", "deleted", "freed", "kept", "stopped"]
+        rows = self.db.execute(f"SELECT {', '.join(cols)} FROM deletions WHERE run_id = ? ORDER BY id DESC",
+                               (run_id,))
         return [dict(zip(cols, r)) for r in rows]
+
+    def quarantine_folders(self, dry_run_id):
+        row = self.db.execute("SELECT quarantines FROM dry_runs WHERE id = ?", (dry_run_id,)).fetchone()
+        return list(json.loads(row[0]).values()) if row else []
 
     # ------------------------------------------------------------ verifications
     def save_verification(self, run_id, verdict):

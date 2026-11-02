@@ -127,7 +127,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     w.scan.roots.add(str(data))
     w.scan.start_button.click()
     wait_for(qapp, lambda: w.scan.thread is None)
-    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine", "6   Verify"]
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine", "6   Verify", "7   Wait", "8   Delete"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
     assert w.pages.currentWidget() is w.review
@@ -399,3 +399,55 @@ def test_verify_lists_nothing_after_undo(qapp, data, tmp_path):
     w.go(6)
     assert v.picker.count() == 0 and not v.check_button.isEnabled()
     assert "Nothing is in quarantine" in v.stage.text()
+
+
+def test_wait_and_delete(qapp, data, tmp_path):
+    from datetime import datetime, timedelta
+    w, v, db = verify_window(qapp, data, tmp_path)
+    v.check_button.click()
+    wait_for(qapp, lambda: v.thread is None)
+    assert v.next_button.isEnabled()                  # SAFE
+    v.next_button.click()
+    wt = w.wait
+    assert w.pages.currentWidget() is wt
+    assert wt.status.text() == "14 days to go" and not wt.next_button.isEnabled()
+    wt.days.setCurrentIndex(0)                        # 7 days, saved
+    assert wt.status.text() == "7 days to go"
+    later = datetime.now() + timedelta(days=8)
+    wt.now = lambda: later
+    wt.load(wt.scan_id)
+    assert wt.status.text() == "The wait is over" and wt.next_button.isEnabled()
+
+    wt.next_button.click()
+    d = w.delete
+    assert w.pages.currentWidget() is d
+    d.now = lambda: later
+    d.load(d.scan_id)
+    # the SAFE check was made before the wait ended, so it does not count
+    assert d.check_labels[1].text().startswith("✓  Waited 7 days")
+    assert d.check_labels[2].text().startswith("✗") and not d.delete_button.isEnabled()
+    with Store(db) as st:                            # pretend the check was made after the wait
+        st.db.execute("UPDATE verifications SET checked = ?", (later.strftime("%Y-%m-%d %H:%M:%S"),))
+        st.commit()
+    d.load(d.scan_id)
+    assert all(lab.text().startswith("✓") for lab in d.check_labels)
+    assert not d.delete_button.isEnabled()           # the box is not ticked yet
+    d.understand.setChecked(True)
+    assert d.delete_button.isEnabled()
+
+    d.confirm = lambda title, text: False
+    d.delete_button.click()
+    assert len(files(tmp_path / "_q")) == 4            # cancelled: nothing deleted
+
+    kept_before = files(data)
+    d.confirm = lambda title, text: True
+    d.delete_button.click()
+    wait_for(qapp, lambda: d.thread is None)
+    assert d.result.text() == "Deleted 4 copies, freeing 10.21 MB."
+    assert not (tmp_path / "_q").exists()             # emptied folders removed too
+    assert files(data) == kept_before                 # kept copies untouched
+    assert d.picker.count() == 0
+
+    w.go(5)                                           # it can no longer be put back
+    assert not w.quarantine.undo_button.isEnabled()
+    assert "deleted them for good" in w.quarantine.result_title.text()

@@ -12,8 +12,8 @@ Nothing is deleted until a verified quarantine has waited. Scanning is read-only
 
 | Path | What it is |
 |---|---|
-| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, `review` (groups results by folder), `keepers` (decides which copy of each group stays), `dryrun` (checks every planned move without moving anything), `mover` (carries out a saved dry run), and `store` (the SQLite hash cache, saved scans, keeper choices, dry runs and quarantine runs). Each has functions a UI can call and a `main()` for the command line. |
-| `dupefinder/app/` | The desktop app (work in progress). Steps 1 to 6 (Scan, Review groups, Choose keepers, Dry run, Quarantine, Verify) work; Wait and Delete are next are shown but not built yet. |
+| `dupefinder/` | The engine as a Python package: `finder`, `quarantine`, `verify`, `backup_sets`, `rescue`, `testdata`, `review` (groups results by folder), `keepers` (decides which copy of each group stays), `dryrun` (checks every planned move without moving anything), `mover` (carries out a saved dry run), `deleter` (the only code that deletes, with the conditions for it), and `store` (the SQLite database the app keeps its work in). Each has functions a UI can call and a `main()` for the command line. |
+| `dupefinder/app/` | The desktop app. All eight steps work, from Scan to Delete are shown but not built yet. |
 | `tests/` | Automated tests, including the edge cases found on real drives. They run on Windows and Linux for every pull request. |
 | `engine/find_dupes.py` | Read-only scan of one or more folders or drives: size, then first 64 KB, then full BLAKE2b hash. Writes a CSV report. |
 | `engine/quarantine_dupes.py` | Moves extra copies to a quarantine folder on the same drive. Dry run by default; `--go` to move, `--verify` to re-hash first, `--undo LOG` to restore. Keeper rules: `--only-under`, `--prefer`, `--skip-name`. |
@@ -41,7 +41,7 @@ Add `--db C:\dupefinder\dupefinder.db` to `find_dupes.py` to remember hashes in 
 
 Never run the tools inside live backup folders (Seagate Toolkit, Samsung Smart Switch, File History, Windows Backup).
 
-## The desktop app (work in progress)
+## The desktop app
 
 Needs Python 3.10 or newer.
 
@@ -62,6 +62,10 @@ Add one or more drives or folders, optionally folders to skip, and click **Start
 
 **Verify** re-reads every quarantined copy and its kept copy and says **SAFE** only if every one is still identical, the same check as `verify_quarantine.py`. Otherwise it says **NOT SAFE to delete** and lists each problem (kept copy missing or changed, quarantined copy missing, already put back, or a file that could not be read). It only reads files, can be stopped, and remembers the last result for each quarantine run. Run it again just before deleting anything.
 
+**Wait** counts down a waiting time you choose (7, 14 or 30 days; 14 by default). Use your computer normally meanwhile; Put everything back still works.
+
+**Delete** is the only screen that deletes, and only when three conditions hold: the move finished and was not put back, the wait is over, and a SAFE check was made after the wait and within the last 24 hours (**Check the quarantine now** runs one). You also tick a box and confirm. It deletes only the files the moves log lists, each only if its kept copy is still there with the same size; anything else stays in quarantine and is listed in a `deleted_*.csv` log. Empty folders left in the quarantine are removed; anything else in the quarantine folder is left alone.
+
 ## Running the tests
 
 ```powershell
@@ -71,5 +75,5 @@ py -m pytest
 
 ## Next steps
 
-1. Desktop app: the Wait screen (a reminder and a countdown), then Delete (only after a fresh SAFE check).
-2. A Windows installer, so people don't need Python.
+1. A Windows installer, so people don't need Python.
+2. Try the whole app on a real drive, with a backup first.

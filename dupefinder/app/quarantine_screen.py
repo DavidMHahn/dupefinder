@@ -165,7 +165,12 @@ class QuarantineScreen(QWidget):
             self.next_button.setEnabled(False)
             return
         self.results.setVisible(True)
-        if run["undone"]:
+        if run.get("deleted"):
+            self.result_title.setText(f"Moved {run['moved']:,} copies, then deleted them for good")
+            self.result_text.setText(f"The quarantine of {run['started']} was deleted on {run['deleted']}. "
+                                     "It can no longer be put back.")
+            self.undo_button.setEnabled(False)
+        elif run["undone"]:
             self.result_title.setText("Everything was put back")
             self.result_text.setText(f"The move of {run['started']} was undone on {run['undone']}.")
             self.undo_button.setEnabled(False)
@@ -184,7 +189,7 @@ class QuarantineScreen(QWidget):
                                      "until you are sure nothing is missing; the next step checks it.")
             self.undo_button.setEnabled(self.thread is None and bool(run["moved"]))
         self.log_label.setText(f"Moves log: {run['log_path']}")
-        self.next_button.setEnabled(not run["undone"] and bool(run["moved"]))
+        self.next_button.setEnabled(not run["undone"] and not run.get("deleted") and bool(run["moved"]))
 
     # ------------------------------------------------------------ moving
     def start(self):
@@ -213,7 +218,7 @@ class QuarantineScreen(QWidget):
 
     def undo(self):
         run = self.last_run
-        if self.thread is not None or run is None or run["undone"]:
+        if self.thread is not None or run is None or run["undone"] or run.get("deleted"):
             return
         if not self.confirm("Put everything back",
                             "Move every copy in this moves log back to where it was?"):
