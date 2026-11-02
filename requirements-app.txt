@@ -1,0 +1,2 @@
+# The desktop app's UI library (Qt for Python, the smaller "Essentials" package).
+PySide6-Essentials>=6.12
