@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from .keepers_screen import KeepersScreen
 from .review_screen import ReviewScreen
 from .scan_screen import ScanScreen
 from .worker import default_db_path
@@ -24,7 +25,7 @@ STEPS = [
     ("Delete", "Empty the quarantine for good."),
 ]
 
-BUILT_STEPS = 2          # steps that have a screen so far
+BUILT_STEPS = 3          # steps that have a screen so far
 
 STYLE = """
 QListWidget#steps { border: none; font-size: 14px; }
@@ -53,11 +54,14 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.scan = ScanScreen(db_path)
         self.review = ReviewScreen(db_path)
-        self.pages.addWidget(self.scan)
-        self.pages.addWidget(self.review)
+        self.keepers = KeepersScreen(db_path)
+        for page in (self.scan, self.review, self.keepers):
+            self.pages.addWidget(page)
         self.scan.next_button.clicked.connect(lambda: self.go(2))
         self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
-        self.steps.currentRowChanged.connect(lambda row: self.pages.setCurrentIndex(row))
+        self.review.loaded.connect(lambda has_groups: self._update_steps())
+        self.review.next_requested.connect(lambda: self.go(3))
+        self.steps.currentRowChanged.connect(self._show_page)
 
         side = QVBoxLayout()
         side.setContentsMargins(12, 20, 0, 12)
@@ -78,8 +82,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
         self.review.refresh_scans()
-        self._set_enabled(2 if self.review.scans.count() else 1)
+        self._update_steps()
         self.steps.setCurrentRow(0)
+
+    def _show_page(self, row):
+        if row == 2:                    # Choose keepers works on the scan picked in Review
+            self.keepers.load(self.review.scan_id)
+        self.pages.setCurrentIndex(row)
+
+    def _update_steps(self):
+        """Scan is always open; Review once a scan is saved; Choose keepers once it found duplicates."""
+        upto = 1
+        if self.review.scans.count():
+            upto = 3 if self.review.sets else 2
+        self._set_enabled(upto)
 
     def _set_enabled(self, upto):
         """Steps 1..upto can be opened; the rest are greyed out."""
@@ -91,7 +107,7 @@ class MainWindow(QMainWindow):
     def _scanned(self, scan_id):
         self.review.scan_id = None
         self.review.refresh_scans(select_id=scan_id)
-        self._set_enabled(2)
+        self._update_steps()
 
     def go(self, step):
         self.steps.setCurrentRow(step - 1)

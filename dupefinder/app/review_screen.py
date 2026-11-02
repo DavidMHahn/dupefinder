@@ -19,6 +19,17 @@ from .scan_screen import heading, note
 from .worker import default_db_path
 
 
+def show_in_explorer(path):
+    """Open the folder holding path, with the file selected on Windows. Read-only."""
+    if not path:
+        return
+    if os.name == "nt" and os.path.exists(path):
+        import subprocess
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    else:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
+
+
 class NumberItem(QTableWidgetItem):
     """A table cell that shows text but sorts by a number."""
 
@@ -35,6 +46,7 @@ class ReviewScreen(QWidget):
     """Shows one scan's duplicates. Emits next_requested when the person moves on."""
 
     next_requested = Signal()
+    loaded = Signal(bool)       # a scan was shown; True if it has duplicates
 
     def __init__(self, db_path=None):
         super().__init__()
@@ -107,7 +119,6 @@ class ReviewScreen(QWidget):
         self.next_button = QPushButton("Choose which copies to keep  →")
         self.next_button.setObjectName("primary")
         self.next_button.setEnabled(False)
-        self.next_button.setToolTip("The Choose keepers screen comes next.")
         buttons.addWidget(self.next_button)
         layout.addLayout(buttons)
 
@@ -156,6 +167,8 @@ class ReviewScreen(QWidget):
             f"{fmt(total)} could be freed: {len(groups):,} groups, {files:,} files, "
             f"in {len(self.sets):,} sets of folders" if groups else "No duplicates in this scan.")
         self._fill_table()
+        self.next_button.setEnabled(bool(groups))
+        self.loaded.emit(bool(groups))
 
     # ------------------------------------------------------------ table and tree
     def _fill_table(self):
@@ -176,7 +189,6 @@ class ReviewScreen(QWidget):
             self.table.setItem(row, 3, NumberItem(fmt(fs.wasted), fs.wasted))
         self.table.resizeRowsToContents()
         self.table.setSortingEnabled(True)
-        # stays off until the Choose keepers screen exists
         self.tree.clear()
         self.detail_title.setText("Pick a row above to see its files" if self.shown
                                   else "Nothing matches the filter" if text else "")
@@ -219,12 +231,4 @@ class ReviewScreen(QWidget):
 
     def show_in_explorer(self):
         """Open the folder of the selected file. Read-only."""
-        path = self._selected_path()
-        if not path:
-            return
-        folder = os.path.dirname(path)
-        if os.name == "nt" and os.path.exists(path):
-            import subprocess
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-        else:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        show_in_explorer(self._selected_path())

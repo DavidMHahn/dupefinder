@@ -127,7 +127,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     w.scan.roots.add(str(data))
     w.scan.start_button.click()
     wait_for(qapp, lambda: w.scan.thread is None)
-    assert w.enabled_steps() == ["1   Scan", "2   Review groups"]
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
     assert w.pages.currentWidget() is w.review
@@ -166,3 +166,78 @@ def test_review_picks_earlier_scan(qapp, data, tmp_path):
     assert r.summary.text() == "No duplicates in this scan."      # newest first
     r.scans.setCurrentIndex(1)
     assert r.summary.text().startswith("10.21 MB")
+
+
+def test_no_keepers_step_for_a_scan_without_duplicates(qapp, data, tmp_path):
+    db = str(tmp_path / "db" / "d.db")
+    ScanWorker([str(data / "a")], db_path=db).run()
+    w = MainWindow(db_path=db)
+    assert w.enabled_steps() == ["1   Scan", "2   Review groups"]
+    assert not w.review.next_button.isEnabled()
+
+
+def keepers_window(data, tmp_path):
+    db = str(tmp_path / "db" / "d.db")
+    ScanWorker([str(data)], db_path=db).run()
+    w = MainWindow(db_path=db)
+    w.go(2)
+    w.review.next_button.click()
+    assert w.pages.currentWidget() is w.keepers
+    return w, db
+
+
+def test_keepers_default_rules(qapp, data, tmp_path):
+    w, _ = keepers_window(data, tmp_path)
+    k = w.keepers
+    assert k.summary.text().startswith("4 extra copies would move to quarantine, freeing 10.21 MB. "
+                                       "One copy stays in each of 3 groups.")
+    assert k.tree.topLevelItemCount() == 3
+    video = k.tree.topLevelItem(0)                      # biggest first
+    decisions = {video.child(i).text(0): video.child(i).text(1) for i in range(video.childCount())}
+    assert decisions[str(data / "a" / "video_copy.bin")] == "Keep"
+    assert decisions[str(data / "c" / "deep" / "video_copy.bin")] == "Move to quarantine"
+    assert not k.next_button.isEnabled()                # Dry run screen not built yet
+
+
+def test_keepers_pick_by_hand_is_saved(qapp, data, tmp_path):
+    w, db = keepers_window(data, tmp_path)
+    k = w.keepers
+    video = k.tree.topLevelItem(0)
+    deep = next(video.child(i) for i in range(video.childCount()) if "deep" in video.child(i).text(0))
+    k.tree.setCurrentItem(deep)
+    assert k.keep_button.isEnabled()
+    k.keep_button.click()
+    assert "1 picked by hand" in k.summary.text()
+    assert k.plans[0].keeper == str(data / "c" / "deep" / "video_copy.bin")
+    assert k.reset_button.isEnabled()                   # selection survives the refresh
+
+    again = MainWindow(db_path=db)                      # come back later: the pick is remembered
+    again.go(3)
+    assert again.keepers.plans[0].keeper == str(data / "c" / "deep" / "video_copy.bin")
+    again.keepers.tree.setCurrentItem(again.keepers.tree.topLevelItem(0))
+    again.keepers.reset_button.click()
+    assert again.keepers.plans[0].keeper == str(data / "a" / "video_copy.bin")
+
+
+def test_keepers_rules_change_the_plan(qapp, data, tmp_path):
+    w, db = keepers_window(data, tmp_path)
+    k = w.keepers
+    k.prefer.add(str(data / "b"))
+    assert k.plans[0].keeper == str(data / "b" / "video_copy.bin")
+    k.only_from.add(str(data / "c"))
+    t = [gp for gp in k.plans if gp.moves]
+    assert all(m.startswith(str(data / "c")) for gp in t for m in gp.moves)
+    assert "stay because of a folder or name rule" in k.summary.text()
+    k.skip.setText("*.txt")
+    k.skip.editingFinished.emit()
+    assert all(not m.endswith(".txt") for gp in k.plans for m in gp.moves)
+    with Store(db) as st:
+        rules, _ = st.load_choices(k.scan_id)
+    assert rules["prefer"] == [str(data / "b")] and rules["skip_names"] == ["*.txt"]
+
+
+def test_keepers_filter(qapp, data, tmp_path):
+    w, _ = keepers_window(data, tmp_path)
+    k = w.keepers
+    k.filter.setText("photo")
+    assert k.tree.topLevelItemCount() == 1 and k.shown_note.text() == "1 group matches"
