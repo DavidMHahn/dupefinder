@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QFrame, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import __version__
@@ -32,6 +32,8 @@ STEPS = [
     ("Delete", "Empty the quarantine for good."),
 ]
 
+MIN_WIDTH, MIN_HEIGHT = 640, 420     # smaller than any screen; pages scroll below their size
+
 BUILT_STEPS = 8          # steps that have a screen so far
 
 STYLE = """
@@ -47,7 +49,15 @@ class MainWindow(QMainWindow):
     def __init__(self, db_path=None):
         super().__init__()
         self.setWindowTitle(f"dupefinder {__version__}")
-        self.resize(980, 720)
+        # start at a comfortable size, but never bigger than the screen
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
+        width, height = 1040, 760
+        if avail is not None:
+            width = min(width, int(avail.width() * 0.9))
+            height = min(height, int(avail.height() * 0.9))
+        self.resize(max(width, MIN_WIDTH), max(height, MIN_HEIGHT))
+        self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
 
         self.steps = QListWidget()
         self.steps.setObjectName("steps")
@@ -69,7 +79,13 @@ class MainWindow(QMainWindow):
         self.delete = DeleteScreen(db_path)
         for page in (self.scan, self.review, self.keepers, self.dryrun, self.quarantine, self.verify,
                      self.wait, self.delete):
-            self.pages.addWidget(page)
+            # Each page scrolls when the window is smaller than it, so no page's
+            # content (a scan result, a long list) can stop the window shrinking.
+            scroll = QScrollArea()
+            scroll.setWidget(page)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            self.pages.addWidget(scroll)
         self.scan.next_button.clicked.connect(lambda: self.go(2))
         self.scan.scanned.connect(lambda res, scan_id: self._scanned(scan_id))
         self.review.loaded.connect(lambda has_groups: self._update_steps())
@@ -137,6 +153,10 @@ class MainWindow(QMainWindow):
         self.review.scan_id = None
         self.review.refresh_scans(select_id=scan_id)
         self._update_steps()
+
+    def current(self):
+        """The page now shown (inside its scroll area)."""
+        return self.pages.currentWidget().widget()
 
     def go(self, step):
         self.steps.setCurrentRow(step - 1)
