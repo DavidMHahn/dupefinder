@@ -130,7 +130,7 @@ def test_review_after_scan(qapp, data, tmp_path):
     assert w.enabled_steps() == ["1   Scan", "2   Review groups", "3   Choose keepers", "4   Dry run", "5   Quarantine", "6   Verify", "7   Wait", "8   Delete"]
     assert w.scan.next_button.isEnabled()
     w.scan.next_button.click()
-    assert w.pages.currentWidget() is w.review
+    assert w.current() is w.review
 
     r = w.review
     assert r.summary.text().startswith("10.21 MB could be freed: 3 groups, 7 files")
@@ -182,7 +182,7 @@ def keepers_window(data, tmp_path):
     w = MainWindow(db_path=db)
     w.go(2)
     w.review.next_button.click()
-    assert w.pages.currentWidget() is w.keepers
+    assert w.current() is w.keepers
     return w, db
 
 
@@ -246,7 +246,7 @@ def test_keepers_filter(qapp, data, tmp_path):
 def dryrun_window(data, tmp_path):
     w, db = keepers_window(data, tmp_path)
     w.keepers.next_button.click()
-    assert w.pages.currentWidget() is w.dryrun
+    assert w.current() is w.dryrun
     d = w.dryrun
     vol = next(iter(d.quarantines))
     assert d.set_quarantine(vol, str(tmp_path / "_q"))
@@ -305,7 +305,7 @@ def quarantine_window(qapp, data, tmp_path):
     wait_for(qapp, lambda: d.thread is None)
     d.next_button.click()
     q = w.quarantine
-    assert w.pages.currentWidget() is q
+    assert w.current() is q
     q.confirm = lambda title, text: True
     q.errors = []
     q.error = lambda title, text: q.errors.append(text)
@@ -365,7 +365,7 @@ def verify_window(qapp, data, tmp_path):
     wait_for(qapp, lambda: q.thread is None)
     assert q.next_button.isEnabled()
     q.next_button.click()
-    assert w.pages.currentWidget() is w.verify
+    assert w.current() is w.verify
     return w, w.verify, db
 
 
@@ -409,7 +409,7 @@ def test_wait_and_delete(qapp, data, tmp_path):
     assert v.next_button.isEnabled()                  # SAFE
     v.next_button.click()
     wt = w.wait
-    assert w.pages.currentWidget() is wt
+    assert w.current() is wt
     assert wt.status.text() == "14 days to go" and not wt.next_button.isEnabled()
     wt.days.setCurrentIndex(0)                        # 7 days, saved
     assert wt.status.text() == "7 days to go"
@@ -420,7 +420,7 @@ def test_wait_and_delete(qapp, data, tmp_path):
 
     wt.next_button.click()
     d = w.delete
-    assert w.pages.currentWidget() is d
+    assert w.current() is d
     d.now = lambda: later
     d.load(d.scan_id)
     # the SAFE check was made before the wait ended, so it does not count
@@ -464,3 +464,27 @@ def test_version_matches_pyproject():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     text = open(os.path.join(root, "pyproject.toml"), encoding="utf-8").read()
     assert re.search(r'^version = "([^"]+)"', text, re.M).group(1) == __version__
+
+
+def test_window_can_shrink_before_and_after_a_scan(qapp, data, tmp_path):
+    # Reported Nov 2 2026: after a scan the window could no longer be made shorter,
+    # because the scan results raised the window's minimum height.
+    from dupefinder.app.window import MIN_HEIGHT, MIN_WIDTH
+    w = MainWindow(db_path=str(tmp_path / "db" / "d.db"))
+    w.show()
+    qapp.processEvents()
+    assert w.minimumSizeHint().height() <= MIN_HEIGHT and w.minimumSizeHint().width() <= MIN_WIDTH
+    w.scan.roots.add(str(data))
+    w.scan.start_button.click()
+    wait_for(qapp, lambda: w.scan.thread is None)
+    for step in range(1, 9):
+        w.go(step)
+        qapp.processEvents()
+        hint = w.minimumSizeHint()
+        assert hint.height() <= MIN_HEIGHT and hint.width() <= MIN_WIDTH, (step, hint.toTuple())
+    w.resize(MIN_WIDTH, MIN_HEIGHT)
+    qapp.processEvents()
+    assert w.size().toTuple() == (MIN_WIDTH, MIN_HEIGHT)
+    w.resize(1600, 1000)
+    qapp.processEvents()
+    assert w.size().toTuple() == (1600, 1000)
